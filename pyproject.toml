@@ -30,6 +30,7 @@ dependencies = [
     "PyYAML>=6.0",
     "structlog>=24.1",
     "prometheus-client>=0.20",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

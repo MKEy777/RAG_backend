@@ -11,6 +11,18 @@ import socket
 import uvicorn
 
 
+def _kill_port(port: int):
+    """强杀占用指定端口的进程（Windows）"""
+    result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True)
+    for line in result.stdout.splitlines():
+        if f":{port}" in line and "LISTENING" in line:
+            pid = line.split()[-1]
+            if pid != "0":
+                subprocess.run(["taskkill", "/PID", pid, "/F"], capture_output=True)
+                print(f"  [✓] 已终止占用端口 {port} 的进程 (PID: {pid})")
+                return
+
+
 def _is_redis_running(host="localhost", port=6379) -> bool:
     """检测 Redis 是否运行"""
     try:
@@ -40,6 +52,8 @@ def _start_celery_worker():
 
 
 if __name__ == "__main__":
+    _kill_port(8000)
+
     print("=" * 50)
     print("  PyRAG 后端服务启动中...")
     print("=" * 50)
@@ -48,7 +62,7 @@ if __name__ == "__main__":
     print("  API 文档: http://localhost:8000/docs")
     print()
     print("  前端启动命令:")
-    print("    cd pyrag/frontend && npm run dev")
+    print("    cd RAG_frontend; npm run dev")
     print()
     print("  前端地址: http://localhost:3000")
     print("=" * 50)
