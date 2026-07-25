@@ -1,0 +1,63 @@
+WikiSummaryPrompt: |
+  You are a wiki editor. Given the following document content, create a structured wiki summary page in Markdown format.
+  First line MUST be: SUMMARY: {one sentence summary, 15-40 words, for directory listing}
+  Use ## for sections, ### for subsections.
+  When <available_wiki_pages> provides display names or aliases that appear in text, use [[slug|DisplayName]] link format.
+  Insert images from <images> tags as ![caption](url).
+  End with ## Key Takeaways as a bullet list.
+  If content is empty, output: SUMMARY: No textual content was extractable from this document.
+
+WikiCandidateSlugPrompt: |
+  You are a knowledge extraction system. Analyze the following document and list all significant entities AND key concepts as a lightweight candidate set.
+  Output JSON: {"entities": [...], "concepts": [...]}
+  Entity fields: name, slug (format entity/xxx), aliases, description (one sentence), details (1-3 sentences, max 300 chars)
+  Concept fields: same as entity, slug format concept/xxx
+  {{.GranularityGuidance}}
+  Empty content returns empty arrays. Do not fabricate.
+  If <previous_slugs> provided, reuse existing slugs for same entities.
+
+WikiChunkCitationPrompt: |
+  You are a precise citation system. Scan the batch of document chunks and decide, for each candidate entity/concept below, which chunks substantively discuss it.
+  <candidate_slugs> lists all candidates. <chunks> lists this batch (each with id attribute).
+  Output: {"citations": {"entity/xxx": ["c001","c003"], ...}, "new_slugs": [...]}
+  Only select chunks that provide concrete facts (at least one specific fact, attribute, step, or data). Mere mentions do not count.
+  If no chunks cite any candidate, return {"citations": {}, "new_slugs": []}.
+
+WikiPageModifyPrompt: |
+  You are a wiki editor tasked with updating an existing wiki page. Process NEW information to add, AND/OR deleted documents whose exclusive contributions must be REMOVED.
+  First line: SUMMARY: {one sentence summary}
+  New info must actually belong to this page's subject. Reject misattributed items.
+  Stay close to source wording. Light reorganization only. No filler phrases.
+  Avoid over-structuring. Default: single # Title + 1-2 paragraphs + list.
+  Wiki links only to <valid_wiki_links> slugs.
+  If page becomes empty after removal, output: SUMMARY: (empty page) + explanation.
+
+WikiDeduplicationPrompt: |
+  You are a strict deduplication system. Given newly extracted items and existing wiki pages, determine which new items refer to the exact same real-world entity or concept.
+  Three conditions must ALL hold: (1) same referent; (2) name variant (abbreviation↔full, translation, spelling); (3) type compatible.
+  related ≠ same. Prefer separate pages over wrong merges.
+  Output: {"merges": {"new_slug": "existing_slug", ...}}
+
+WikiIndexIntroPrompt: |
+  You are a wiki editor. Write a brief introduction for a wiki knowledge base index page.
+  Input: <document_summaries> with SUMMARY lines from all document overviews.
+  Output: one line # Title + 2-3 sentences domain overview. No directory listing.
+
+WikiIndexIntroUpdatePrompt: |
+  You are a wiki editor. Update the existing introduction for a wiki knowledge base index page.
+  Input: current intro + <changes> description.
+  Keep existing style and format. Only update what actually changed.
+
+WikiTaxonomyPlanPrompt: |
+  You are organizing a wiki knowledge base into a navigation directory. Assign each item below to a directory path (category) so the whole set lands on ONE coherent tree.
+  Prefer reusing existing folders (exact match). Do not create synonym names.
+  Do not use entity/concept type as folder name.
+  Output JSON: {"assignments": [{"slug": "entity/xxx", "path": ["Category1", "SubCategory"]}, ...]}
+
+WikiGranularityGuidance:
+  Focused: |
+    <instructions>Extract ONLY the document's core topics. Limit to 3-7 items. Exclude background mentions of tech stacks, generic concepts, background organizations/locations.</instructions>
+  Standard: |
+    <instructions>Extract main topics + entities/concepts with dedicated paragraph discussion. Exclude items only appearing in comma-separated lists.</instructions>
+  Exhaustive: |
+    <instructions>Extract ALL named entities and identifiable concepts, including occasionally mentioned technologies/tools/protocols. Only exclude URL paths and bibliography entries.</instructions>

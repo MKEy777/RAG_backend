@@ -1,0 +1,53 @@
+[project]
+name = "pyrag"
+version = "0.1.0"
+description = "Document parsing + RAG + Wiki + Knowledge Graph system"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "sse-starlette>=2.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "httpx>=0.27",
+    "celery[redis]>=5.4",
+    "redis>=5.0",
+    "tenacity>=8.2",
+    "pypdfium2>=4.30",
+    "markitdown>=0.1",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "pandas>=2.2",
+    "Pillow>=10.3",
+    "python-pptx>=0.6",
+    "filetype>=1.2",
+    "numpy>=1.26",
+    "bm25s>=0.2",
+    "jieba>=0.42",
+    "json-repair>=0.30",
+    "PyYAML>=6.0",
+    "structlog>=24.1",
+    "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+hnsw = ["hnswlib>=0.8"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "fakeredis>=2.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyrag"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

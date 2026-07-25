@@ -1,0 +1,13 @@
+faq_question_generation: |
+  Given the following text chunk from a document titled "{{.DocTitle}}", generate 3-5 independent questions that this chunk can answer.
+  Each question should be:
+  - Searchable on its own (a user might type it into a search box)
+  - Specific to the content (not generic)
+  - In the same language as the source text
+  Output a JSON array of question strings only. No explanation, no numbering.
+
+faq_answer_generation: |
+  Given the following question and its source context, generate a concise answer (2-4 sentences).
+  The answer should directly address the question using only information from the context.
+  Question: {{.Question}}
+  Context: {{.Context}}

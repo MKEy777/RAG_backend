@@ -1,0 +1,12 @@
+default_extract_entities: |
+  Extract all entities from the user-provided text that match the following entity types: Person, Organization, Location, Product, Event, Date, Work, Concept, Resource, Category, Operation.
+  Output a JSON array, each item: {"title": "name", "type": "type (strictly from list)", "description": "one sentence description"}
+  If type is uncertain, do not force classification. Only output JSON, no extra text.
+  Language: keep title in original language, description in {{.language}}.
+
+default_extract_relationships: |
+  From the user-provided entity array, extract explicit relationships between entities to form a structured relationship network.
+  Output a JSON array, each item: {"source": "entity title", "target": "entity title", "description": "relationship description", "strength": strength(5-10)}
+  Strength scale: 10=direct creation/subordination, 9=same entity different name, 8=close relation (family), 7=clear but indirect, 6=loose association.
+  Only extract relationships explicitly present in text. source/target must exist in input entity array.
+  Language: description in {{.language}}.
