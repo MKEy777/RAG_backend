@@ -31,14 +31,19 @@ async def import_faq_item(kb_id: str, body: FaqItemBody, session: Session = Depe
     kb = session.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
+    rows = _add_item_chunks(session, kb, kb_id, body)
+    session.commit()
+    vectors = await embed_texts([q for _, q, _, _ in rows])
+    metadata = [{"knowledge_id": fid, "chunk_type": "faq", "tags": tags} for _, _, fid, tags in rows]
+    await get_storage().vector.upsert(kb_id, [cid for cid, _, _, _ in rows], vectors, metadata)
+    log.info("FAQ导入", kb_id=kb_id, faq_id=rows[0][2], questions=len(rows))
+    return {"faq_id": rows[0][2], "chunk_count": len(rows)}
 
+
+def _add_item_chunks(session: Session, kb: KnowledgeBase, kb_id: str, body: FaqItemBody) -> list[tuple[str, str, str, list[str]]]:
     faq_id = uuid.uuid4().hex
-    questions = [("standard", body.question)] + [
-        ("similar", q) for q in body.similar_questions if q.strip()
-    ]
-
-    ids: list[str] = []
-    texts: list[str] = []
+    rows: list[tuple[str, str, str, list[str]]] = []
+    questions = [("standard", body.question)] + [("similar", q) for q in body.similar_questions if q.strip()]
     for role, q in questions:
         cid = uuid.uuid4().hex
         session.add(Chunk(
@@ -51,17 +56,8 @@ async def import_faq_item(kb_id: str, body: FaqItemBody, session: Session = Depe
                 "negative_questions": body.negative_questions,
             },
         ))
-        ids.append(cid)
-        texts.append(q)
-    session.commit()
-
-    storage = get_storage()
-    vectors = await embed_texts(texts)
-    metadata = [{"knowledge_id": faq_id, "chunk_type": "faq", "tags": body.tags} for _ in ids]
-    await storage.vector.upsert(kb_id, ids, vectors, metadata)
-
-    log.info("FAQ导入", kb_id=kb_id, faq_id=faq_id, questions=len(ids))
-    return {"faq_id": faq_id, "chunk_count": len(ids)}
+        rows.append((cid, q, faq_id, body.tags))
+    return rows
 
 
 @router.get("/{kb_id}/items")
@@ -112,3 +108,44 @@ async def delete_faq_item(kb_id: str, faq_id: str, session: Session = Depends(ge
     session.commit()
     await get_storage().vector.delete_chunks(kb_id, ids)
     return {"status": "deleted", "chunk_count": len(ids)}
+
+
+class FaqBatchBody(BaseModel):
+    items: list[FaqItemBody]
+    dry_run: bool = False
+
+
+@router.post("/{kb_id}/items/batch")
+async def import_faq_batch(kb_id: str, body: FaqBatchBody, session: Session = Depends(get_session)):
+    kb = session.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    errors = [
+        {"index": i, "error": "question/answer 不能为空"}
+        for i, item in enumerate(body.items)
+        if not item.question.strip() or not item.answer.strip()
+    ]
+    if body.dry_run or errors:
+        return {"valid": len(body.items) - len(errors), "errors": errors, "imported": 0}
+
+    rows: list[tuple[str, str, str, list[str]]] = []
+    for item in body.items:
+        rows.extend(_add_item_chunks(session, kb, kb_id, item))
+    session.commit()
+
+    vectors = await embed_texts([q for _, q, _, _ in rows])
+    metadata = [{"knowledge_id": fid, "chunk_type": "faq", "tags": tags} for _, _, fid, tags in rows]
+    await get_storage().vector.upsert(kb_id, [cid for cid, _, _, _ in rows], vectors, metadata)
+    log.info("FAQ批量导入", kb_id=kb_id, items=len(body.items), chunks=len(rows))
+    return {"valid": len(body.items), "errors": [], "imported": len(body.items)}
+
+
+@router.get("/{kb_id}/export")
+def export_faq(kb_id: str, session: Session = Depends(get_session)):
+    from fastapi.responses import JSONResponse
+
+    data = list_faq_items(kb_id, session)
+    return JSONResponse(
+        content=data["items"],
+        headers={"Content-Disposition": f'attachment; filename="faq_{kb_id}.json"'},
+    )
