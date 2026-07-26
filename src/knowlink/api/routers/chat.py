@@ -8,6 +8,7 @@ from sse_starlette.sse import EventSourceResponse
 from ...generation.answer import generate_answer, generate_answer_stream
 from ...models.database import get_session
 from ...retrieval.pipeline import enrich_faq_candidates, retrieve_candidates
+from ...retrieval.rewrite import rewrite_query
 
 router = APIRouter()
 
@@ -29,8 +30,9 @@ class ChatResponse(BaseModel):
 
 @router.post("")
 async def chat(body: ChatRequest, session: Session = Depends(get_session)):
+    search_query = await rewrite_query(body.query, body.history)
     result = await retrieve_candidates(
-        session, body.kb_ids, body.query,
+        session, body.kb_ids, search_query,
         top_k=body.top_k,
         enable_graph=body.enable_graph,
         enable_wiki_boost=body.enable_wiki_boost,
