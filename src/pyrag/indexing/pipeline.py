@@ -26,6 +26,7 @@ async def run_indexing_pipeline(
     markdown: str,
     doc_title: str,
     chunking_config: dict | None = None,
+    mark_completed: bool = True,
 ) -> None:
     config = chunking_config or {}
     strategy = config.get("strategy", "auto")
@@ -67,11 +68,12 @@ async def run_indexing_pipeline(
             log.info("使用平铺块模式", count=chunk_count)
             await _index_flat(session, result, knowledge_id, kb_id, tenant_id, doc_title, storage)
 
-        session.execute(
-            update(Knowledge)
-            .where(Knowledge.id == knowledge_id)
-            .values(parse_status="completed", processed_at=datetime.now(timezone.utc))
-        )
+        if mark_completed:
+            session.execute(
+                update(Knowledge)
+                .where(Knowledge.id == knowledge_id)
+                .values(parse_status="completed", processed_at=datetime.now(timezone.utc))
+            )
         session.commit()
         log.info("索引管线完成", knowledge_id=knowledge_id, kb_id=kb_id)
     except Exception as e:

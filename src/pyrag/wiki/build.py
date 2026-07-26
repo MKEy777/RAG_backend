@@ -61,13 +61,25 @@ def run_wiki_build(session: Session, kb_id: str) -> int:
         all_ops.extend(ops)
 
     if not all_ops:
-        asyncio.run(finalize(session, kb_id, tenant_id))
+        asyncio.run(_finalize_and_embed(session, kb_id, tenant_id))
         return 0
 
-    processed = asyncio.run(_wiki_build_async(session, all_ops, kb_id, tenant_id))
-    asyncio.run(finalize(session, kb_id, tenant_id))
-    asyncio.run(embed_wiki_pages(session, kb_id, tenant_id))
+    processed = asyncio.run(_wiki_build_all(session, all_ops, kb_id, tenant_id))
     log.info("Wiki构建完成", kb_id=kb_id, processed=processed)
+    return processed
+
+
+async def _finalize_and_embed(session: Session, kb_id: str, tenant_id: int) -> None:
+    await finalize(session, kb_id, tenant_id)
+    await embed_wiki_pages(session, kb_id, tenant_id)
+
+
+async def _wiki_build_all(
+    session: Session, ops: list, kb_id: str, tenant_id: int
+) -> int:
+    processed = await _wiki_build_async(session, ops, kb_id, tenant_id)
+    await finalize(session, kb_id, tenant_id)
+    await embed_wiki_pages(session, kb_id, tenant_id)
     return processed
 
 

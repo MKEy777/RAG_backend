@@ -77,7 +77,7 @@ def _fix_unresolved_images(markdown: str, images: list[ImageRef]) -> tuple[str, 
 
 
 @register("pptx")
-def parse_pptx(data: bytes, filename: str) -> ParseResult:
+def parse_pptx(data: bytes, filename: str, **kwargs) -> ParseResult:
     if data[:8] == OLE_MAGIC:
         return parse_ppt(data, filename)
 
@@ -96,7 +96,7 @@ def parse_pptx(data: bytes, filename: str) -> ParseResult:
 
 
 @register("ppt")
-def parse_ppt(data: bytes, filename: str) -> ParseResult:
+def parse_ppt(data: bytes, filename: str, **kwargs) -> ParseResult:
     from .docx_parser import _convert_with_libreoffice, _has_libreoffice
 
     converted = _convert_with_libreoffice(data, ".ppt", ".pptx")

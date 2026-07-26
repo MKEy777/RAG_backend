@@ -15,7 +15,7 @@ if settings.database_url.startswith("sqlite"):
     if ":memory:" in settings.database_url:
         _pool_kwargs = {"poolclass": StaticPool}
     else:
-        _pool_kwargs = {}
+        _pool_kwargs = {"pool_size": 20, "max_overflow": 30, "pool_recycle": 3600}
 
 engine = create_engine(
     settings.database_url,
@@ -44,3 +44,25 @@ def init_db() -> None:
     from . import Base  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite_columns()
+
+
+def _migrate_sqlite_columns() -> None:
+    """SQLite create_all 不会给已有表加新列，手动补齐。"""
+    if not settings.database_url.startswith("sqlite"):
+        return
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if not insp.has_table("knowledge"):
+        return
+    existing = {c["name"] for c in insp.get_columns("knowledge")}
+    new_cols = {
+        "graph_status": "VARCHAR(20)",
+        "wiki_status": "VARCHAR(20)",
+        "summary_status": "VARCHAR(20)",
+    }
+    with engine.begin() as conn:
+        for col, col_type in new_cols.items():
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE knowledge ADD COLUMN {col} {col_type}"))

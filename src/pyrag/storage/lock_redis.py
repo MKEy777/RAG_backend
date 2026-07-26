@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import redis.asyncio as aioredis
 from redis.exceptions import RedisError
 
@@ -11,12 +13,14 @@ class RedisLock:
     def __init__(self, url: str | None = None):
         self._url = url or settings.redis_url
         self._client: aioredis.Redis | None = None
-        # Redis 不可用时降级为进程内锁，避免同步路径被 ConnectionError 中断
+        self._client_loop: asyncio.AbstractEventLoop | None = None
         self._fallback = LocalLock()
 
     async def _get_client(self) -> aioredis.Redis:
-        if self._client is None:
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._client_loop is not loop:
             self._client = aioredis.from_url(self._url, decode_responses=False)
+            self._client_loop = loop
         return self._client
 
     async def acquire(self, key: str, ttl_s: int = 30) -> bool:

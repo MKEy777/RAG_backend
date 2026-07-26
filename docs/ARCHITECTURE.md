@@ -288,6 +288,7 @@ class GraphStore(Protocol):
 | 2026-07-26 | 前端三大功能补全：新增 chunks/wiki/graph API 端点、wiki_build_task 接线、图谱 API 读快照；前端 3 视图 3 路由 | B1-B5 F1-F4 |
 | 2026-07-26 | Wiki 编排修复：新增 `wiki/build.py::run_wiki_build` 统一三处编排（Celery 任务/手动 API/同步上传路径）；修复防抖时序（构建即触发者，入队后 available_at 前移）、doc_title 误传 UUID、未处理检测改为 completed_at 过滤、wiki API 响应模型 updated_at 改 datetime | wiki/、tasks/、api/routers/{wiki,documents}.py |
 | 2026-07-26 | 数据一致性修复：文件型 SQLite 弃用 StaticPool 改默认连接池（单连接跨线程共享会被 API 请求的 ROLLBACK 吞掉后台线程未提交写入，导致切块/图谱/Wiki 全空），新增 busy_timeout=30s；RedisLock 连接失败降级 LocalLock；新增 GET /documents/{id}/content 按切块偏移重建解析后文本；前端侧边栏新增 Wiki/知识图谱入口（顶级路由 + 知识库选择器），切片页改左右分栏源文高亮对照 | models/database.py、storage/lock_redis.py、api/routers/documents.py、前端 router/layouts/views |
+| 2026-07-26 | 父子切块语义修正：父块 = 标题层级完整 section（split_by_heading 新增 whole_sections 模式，取消 4096 截断与贪心细分），无标题文档退化为 parent_size 粒度递归切分；_greedy_split 代码围栏原子化（mermaid 等不再被空行拆碎） | chunking/{heading,parent_child,__init__}.py |
 
 ---
 

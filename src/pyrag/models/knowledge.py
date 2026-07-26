@@ -23,6 +23,8 @@ class Knowledge(Base, TimestampMixin, SoftDeleteMixin):
     source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     channel: Mapped[str | None] = mapped_column(String(100), nullable=True)
     parse_status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")
+    graph_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    wiki_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     summary_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     enable_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     embedding_model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)

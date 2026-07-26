@@ -45,7 +45,7 @@ def detect_format(data: bytes, filename: str) -> str:
     return ext if ext else "txt"
 
 
-def parse_file(data: bytes, filename: str) -> ParseResult:
+def parse_file(data: bytes, filename: str, base_dir: str | None = None) -> ParseResult:
     fmt = detect_format(data, filename)
     log.info("文件格式检测", filename=filename, format=fmt, size=len(data))
     parser = _PARSERS.get(fmt)
@@ -54,6 +54,6 @@ def parse_file(data: bytes, filename: str) -> ParseResult:
         parser = _PARSERS.get("txt")
     if parser is None:
         return ParseResult(markdown=data.decode("utf-8", errors="replace"))
-    result = parser(data, filename)
+    result = parser(data, filename, base_dir=base_dir)
     log.info("解析完成", filename=filename, format=fmt, markdown_len=len(result.markdown))
     return result

@@ -31,7 +31,8 @@ class TraceMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
         duration_ms = (time.perf_counter() - start) * 1000
         response.headers["X-Trace-Id"] = tid
-        log.info("request", method=request.method, path=request.url.path, status=response.status_code, duration_ms=round(duration_ms))
+        if not request.url.path.endswith("/status"):
+            log.info("request", method=request.method, path=request.url.path, status=response.status_code, duration_ms=round(duration_ms))
         return response
 
 

@@ -14,19 +14,22 @@ from ..storage.factory import get_storage
 
 WIKI_INDEX_INTRO_PROMPT = (
     "You are a wiki editor. Write a brief introduction for a wiki knowledge base index page.\n"
-    "Output: one line `# Title` + 2-3 sentences of domain overview. No directory listing."
+    "Output: one line `# Title` + 2-3 sentences of domain overview. No directory listing.\n"
+    "IMPORTANT: Write in Chinese (except proper nouns and technical terms)."
 )
 
 WIKI_INDEX_INTRO_UPDATE_PROMPT = (
     "You are a wiki editor. Update the existing introduction for a wiki knowledge base index page.\n"
-    "Keep existing style and format. Only update descriptions that actually changed."
+    "Keep existing style and format. Only update descriptions that actually changed.\n"
+    "IMPORTANT: Write in Chinese (except proper nouns and technical terms)."
 )
 
 WIKI_TAXONOMY_PROMPT = (
     "You are organizing a wiki knowledge base into a navigation directory. "
     "Assign each item below to a directory path (category) so the whole set lands on ONE coherent tree.\n"
     "Prefer reusing existing folders. Do not use entity/concept type names as folder names.\n"
-    "Output JSON: {\"assignments\": [{\"slug\": \"entity/xxx\", \"path\": [\"Category1\", \"SubCategory\"]}, ...]}"
+    "IMPORTANT: Folder names in path MUST be in Chinese (except proper nouns and technical terms).\n"
+    "Output JSON: {\"assignments\": [{\"slug\": \"entity/xxx\", \"path\": [\"分类1\", \"子分类\"]}, ...]}"
 )
 
 WIKI_LINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")

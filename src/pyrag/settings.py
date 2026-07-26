@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     wiki_dedup_top_k: int = 5  # detail.md Wiki §步骤4
     wiki_dedup_bypass: int = 25  # detail.md Wiki §步骤4
 
+    # vlm
+    vlm_concurrency: int = 3
+
     # graph
     graph_entity_concurrency: int = 4  # detail.md §知识图谱
     graph_relation_concurrency: int = 4  # detail.md §知识图谱
@@ -105,7 +108,7 @@ class Settings(BaseSettings):
     # security
     max_upload_size_mb: int = 100
     allowed_extensions: list[str] = [
-        ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".md", ".txt", ".csv",
+        ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".md", ".txt", ".csv", ".zip",
     ]
     rate_limit_per_minute: int = 60
     max_kb_ids_per_query: int = 20

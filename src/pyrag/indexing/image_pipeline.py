@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from ..llm.client import get_llm_client
 from ..parsing.base import ImageRef
+from ..settings import settings
+
+logger = logging.getLogger(__name__)
 
 VLM_OCR_PROMPT = (
     "You are an OCR assistant. Extract all body text content from this document image "
@@ -40,3 +46,41 @@ async def process_image_cascade(
             pass
 
     return result
+
+
+async def enrich_markdown_with_images(markdown: str, images: list[ImageRef]) -> str:
+    """Run VLM OCR on images and replace ![img_N](images/{id}.png) placeholders in-place."""
+    if not images:
+        return markdown
+
+    logger.info("[VLM] 开始图片提取: images=%d", len(images))
+    sem = asyncio.Semaphore(settings.vlm_concurrency)
+
+    async def _process(i: int, img: ImageRef) -> tuple[int, str]:
+        async with sem:
+            try:
+                res = await process_image_cascade(img)
+                content = res["ocr_text"] or res["caption"]
+                if content:
+                    logger.info("[VLM] 图片 %d/%d 提取成功: %d chars", i + 1, len(images), len(content))
+                    return (i, content)
+            except Exception:
+                pass
+            return (i, "")
+
+    results = await asyncio.gather(*[_process(i, img) for i, img in enumerate(images)])
+
+    # 原地替换占位符
+    enriched = markdown
+    for i, content in results:
+        if not content:
+            continue
+        ref = images[i]
+        placeholder = f"![img_{i + 1}](images/{ref.id}.png)"
+        if placeholder in enriched:
+            enriched = enriched.replace(placeholder, content, 1)
+        else:
+            enriched += "\n\n" + content
+
+    logger.info("[VLM] 完成: %d -> %d chars", len(markdown), len(enriched))
+    return enriched

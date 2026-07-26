@@ -10,11 +10,11 @@ SEPARATORS = ["\n\n", "\n", "。", ".", "？", "?", "！", "!", "；", ";", "，
 
 _CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 _LATEX_BLOCK_RE = re.compile(r"\$\$[\s\S]*?\$\$")
-_TABLE_ROW_RE = re.compile(r"^\|.+\|$", re.MULTILINE)
+_TABLE_BLOCK_RE = re.compile(r"(?:^\|.+\|[ ]*$\n?)+", re.MULTILINE)
 _IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 _LINK_RE = re.compile(r"\[[^\]]*\]\([^)]+\)")
 
-PROTECT_PATTERNS = [_CODE_BLOCK_RE, _LATEX_BLOCK_RE, _IMAGE_RE, _LINK_RE]
+PROTECT_PATTERNS = [_CODE_BLOCK_RE, _LATEX_BLOCK_RE, _TABLE_BLOCK_RE, _IMAGE_RE, _LINK_RE]
 
 
 def _protect(text: str) -> tuple[str, dict[str, str]]:
@@ -48,12 +48,19 @@ def split_recursive(
     protected, placeholders = _protect(text)
     pieces = _recursive_split(protected, separators, chunk_size)
     result: list[ChunkSpan] = []
-    offset = 0
+    search_from = 0
     for piece in pieces:
         restored = _restore(piece, placeholders)
-        result.append(ChunkSpan(text=restored.strip(), start=offset, end=offset + len(restored)))
-        offset += len(restored)
-    return [r for r in result if r.text]
+        stripped = restored.strip()
+        if not stripped:
+            continue
+        # 在原文中定位实际起始位置，跳过被切分消耗的分隔符
+        pos = text.find(stripped, search_from)
+        if pos == -1:
+            pos = search_from
+        result.append(ChunkSpan(text=stripped, start=pos, end=pos + len(stripped)))
+        search_from = pos + len(stripped)
+    return result
 
 
 def _recursive_split(text: str, separators: list[str], chunk_size: int) -> list[str]:

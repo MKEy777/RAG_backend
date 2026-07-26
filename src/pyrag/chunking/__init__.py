@@ -25,6 +25,14 @@ def chunk_document(
         profile = analyze(text)
         strategy = choose_strategy(profile)
 
+    # 父子模式 + heading：父块取标题层级完整 section（不截断不细分）
+    if enable_parent_child and strategy == "heading":
+        sections = split_by_heading(text, chunk_size, whole_sections=True)
+        # 无标题结构时退化为 parent_size 粒度切分
+        if len(sections) == 1 and len(text) > (parent_size or settings.parent_chunk_size):
+            sections = split_recursive(text, parent_size or settings.parent_chunk_size, 0)
+        return build_parent_child(sections, parent_size, child_size)
+
     chunks = _run_strategy(text, strategy, chunk_size, overlap)
 
     if not validate(chunks, chunk_size, len(text)):

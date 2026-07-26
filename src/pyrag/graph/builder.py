@@ -19,6 +19,7 @@ EXTRACT_ENTITIES_PROMPT = (
     "Extract all entities from the user-provided text that match the following entity types: "
     "Person, Organization, Location, Product, Event, Date, Work, Concept, Resource, Category, Operation.\n"
     "Output a JSON array, each item: {\"title\": \"name\", \"type\": \"type\", \"description\": \"one sentence\"}.\n"
+    "IMPORTANT: title and description MUST be in Chinese (except proper nouns and technical terms).\n"
     "Only output JSON, no extra text."
 )
 
@@ -26,6 +27,7 @@ EXTRACT_RELATIONS_PROMPT = (
     "From the user-provided entity array, extract explicit relationships between entities.\n"
     "Output a JSON array, each item: {\"source\": \"entity title\", \"target\": \"entity title\", "
     "\"description\": \"relationship description\", \"strength\": strength(5-10)}.\n"
+    "IMPORTANT: description MUST be in Chinese (except proper nouns and technical terms).\n"
     "Only output JSON, no extra text."
 )
 
@@ -64,8 +66,8 @@ class GraphBuilder:
                     async def _call():
                         return await client.chat(
                             [
-                                {"role": "system", "content": ENTITY_EXTRACTION_PROMPT},
-                                {"role": "user", "content": source_text},
+                                {"role": "system", "content": EXTRACT_ENTITIES_PROMPT},
+                                {"role": "user", "content": text},
                             ],
                             temperature=0.3,
                             max_tokens=2048,

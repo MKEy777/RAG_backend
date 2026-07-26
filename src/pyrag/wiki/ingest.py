@@ -20,8 +20,9 @@ WIKI_SUMMARY_PROMPT = (
     "First line MUST be: SUMMARY: {one sentence summary, 15-40 words}\n"
     "Use ## for sections, ### for subsections.\n"
     "When available wiki pages' names appear in text, use [[slug|DisplayName]] link format.\n"
-    "End with ## Key Takeaways as a bullet list.\n"
-    "If content is empty, output: SUMMARY: No textual content was extractable from this document."
+    "End with ## 关键要点 as a bullet list.\n"
+    "IMPORTANT: Write ALL content in Chinese (except proper nouns, technical terms, and code).\n"
+    "If content is empty, output: SUMMARY: 本文档未提取到有效文本内容。"
 )
 
 WIKI_CANDIDATE_SLUG_PROMPT = (
@@ -30,6 +31,7 @@ WIKI_CANDIDATE_SLUG_PROMPT = (
     "Output JSON: {\"entities\": [...], \"concepts\": [...]}\n"
     "Entity fields: name, slug (format entity/xxx), aliases, description (one sentence), details (1-3 sentences, max 300 chars)\n"
     "Concept fields: same as entity, slug format concept/xxx\n"
+    "IMPORTANT: name, description, details MUST be in Chinese (except proper nouns and technical terms). slug stays in English/pinyin.\n"
     "Empty content returns empty arrays. Do not fabricate."
 )
 

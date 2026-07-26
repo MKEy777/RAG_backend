@@ -13,7 +13,7 @@ from datetime import datetime
 
 import logging as _logging
 
-from ...logging import get_logger
+from ...logging import bind_kb, get_logger
 from ...models.database import get_session
 from ...models.knowledge import Knowledge
 from ...models.knowledge_base import KnowledgeBase
@@ -43,58 +43,117 @@ def _is_redis_available() -> bool:
         return False
 
 
-def _run_parse_sync(knowledge_id: str, kb_id: str, tenant_id: int, file_data: bytes, filename: str):
+_redis_available = _is_redis_available()
+
+
+def _run_parse_sync(knowledge_id: str, kb_id: str, tenant_id: int, file_data: bytes, filename: str, base_dir: str | None = None):
     import asyncio
     import traceback
     from ...models.database import SessionLocal
     from ...parsing.registry import parse_file
     from ...parsing.base import ParserCapabilityError
     from ...indexing.pipeline import run_indexing_pipeline
+    from ...indexing.image_pipeline import enrich_markdown_with_images
 
     dbg(f"[同步解析] 开始: {filename} ({len(file_data)} bytes)")
-    session = SessionLocal()
     try:
-        result = parse_file(file_data, filename)
-        dbg(f"[2/4] 解析完成 markdown={len(result.markdown)}")
+        result = parse_file(file_data, filename, base_dir=base_dir)
+        dbg(f"[解析] 完成 markdown={len(result.markdown)} images={len(result.images)}")
 
-        kb = session.get(Knowledge, knowledge_id)
-        chunking_config = {}
-        if kb and kb.metadata_:
-            chunking_config = kb.metadata_.get("chunking_config", {})
+        session = SessionLocal()
+        try:
+            kb = session.get(Knowledge, knowledge_id)
+            chunking_config = {}
+            if kb and kb.metadata_:
+                chunking_config = kb.metadata_.get("chunking_config", {})
+        finally:
+            session.close()
 
-        dbg("[3/4] 切块和嵌入")
-        asyncio.run(
-            run_indexing_pipeline(
-                session=session,
-                knowledge_id=knowledge_id,
-                kb_id=kb_id,
-                tenant_id=tenant_id,
-                markdown=result.markdown,
-                doc_title=filename,
-                chunking_config=chunking_config,
-            )
-        )
-        dbg("[4/4] 完成")
+        # 文本立即可索引，不等 VLM
+        if result.markdown.strip():
+            session = SessionLocal()
+            try:
+                dbg("[索引] 文本切块+嵌入")
+                asyncio.run(
+                    run_indexing_pipeline(
+                        session=session,
+                        knowledge_id=knowledge_id,
+                        kb_id=kb_id,
+                        tenant_id=tenant_id,
+                        markdown=result.markdown,
+                        doc_title=filename,
+                        chunking_config=chunking_config,
+                        mark_completed=not result.images,
+                    )
+                )
+                dbg("[索引] 文本完成，文档可检索")
+            finally:
+                session.close()
+
+        # VLM 图片处理（耗时操作，不阻塞文本检索）
+        if result.images:
+            full_markdown = asyncio.run(enrich_markdown_with_images(result.markdown, result.images))
+            if len(full_markdown) > len(result.markdown):
+                session = SessionLocal()
+                try:
+                    dbg(f"[索引] 图片内容替换完成 ({len(full_markdown)} chars)")
+                    asyncio.run(
+                        run_indexing_pipeline(
+                            session=session,
+                            knowledge_id=knowledge_id,
+                            kb_id=kb_id,
+                            tenant_id=tenant_id,
+                            markdown=full_markdown,
+                            doc_title=filename,
+                            chunking_config=chunking_config,
+                            mark_completed=True,
+                        )
+                    )
+                    dbg("[索引] 图片索引完成")
+                finally:
+                    session.close()
+            else:
+                # VLM 未提取到有效内容，直接标记完成
+                session = SessionLocal()
+                try:
+                    from sqlalchemy import update as sa_update
+                    from ...models.knowledge import Knowledge as K
+                    session.execute(
+                        K.__table__.update()
+                        .where(K.id == knowledge_id)
+                        .values(parse_status="completed")
+                    )
+                    session.commit()
+                finally:
+                    session.close()
+
+        dbg("[解析管线] 全部完成")
     except ParserCapabilityError as e:
-        session.execute(
-            Knowledge.__table__.update()
-            .where(Knowledge.id == knowledge_id)
-            .values(parse_status="failed", error_message=str(e))
-        )
-        session.commit()
+        session = SessionLocal()
+        try:
+            session.execute(
+                Knowledge.__table__.update()
+                .where(Knowledge.id == knowledge_id)
+                .values(parse_status="failed", error_message=str(e))
+            )
+            session.commit()
+        finally:
+            session.close()
         dbg(f"[失败] 格式不支持: {e}")
     except Exception as e:
         tb = traceback.format_exc()
-        session.execute(
-            Knowledge.__table__.update()
-            .where(Knowledge.id == knowledge_id)
-            .values(parse_status="failed", error_message=tb[:2000])
-        )
-        session.commit()
+        session = SessionLocal()
+        try:
+            session.execute(
+                Knowledge.__table__.update()
+                .where(Knowledge.id == knowledge_id)
+                .values(parse_status="failed", error_message=tb[:2000])
+            )
+            session.commit()
+        finally:
+            session.close()
         dbg(f"[异常] {e}")
         dbg(tb)
-    finally:
-        session.close()
 
 
 def _run_graph_sync(kb_id: str, knowledge_id: str):
@@ -108,6 +167,13 @@ def _run_graph_sync(kb_id: str, knowledge_id: str):
     dbg("[图谱] 开始构建")
     session = SessionLocal()
     try:
+        session.execute(
+            Knowledge.__table__.update()
+            .where(Knowledge.id == knowledge_id)
+            .values(graph_status="processing")
+        )
+        session.commit()
+
         stmt = (
             select(Chunk)
             .where(
@@ -122,15 +188,28 @@ def _run_graph_sync(kb_id: str, knowledge_id: str):
         chunk_dicts = [{"id": c.id, "content": c.content} for c in chunks]
         gm = get_graph_manager()
         asyncio.run(gm.build_document(kb_id, knowledge_id, chunk_dicts))
+
+        session.execute(
+            Knowledge.__table__.update()
+            .where(Knowledge.id == knowledge_id)
+            .values(graph_status="completed")
+        )
+        session.commit()
         dbg("[图谱] 构建完成")
     except Exception as e:
+        session.execute(
+            Knowledge.__table__.update()
+            .where(Knowledge.id == knowledge_id)
+            .values(graph_status="failed")
+        )
+        session.commit()
         dbg(f"[图谱] 失败: {e}")
         traceback.print_exc()
     finally:
         session.close()
 
 
-def _run_wiki_sync(kb_id: str):
+def _run_wiki_sync(kb_id: str, knowledge_id: str):
     import traceback
     from ...models.database import SessionLocal
     from ...wiki.build import run_wiki_build
@@ -138,9 +217,29 @@ def _run_wiki_sync(kb_id: str):
     dbg("[Wiki] 开始构建")
     session = SessionLocal()
     try:
+        session.execute(
+            Knowledge.__table__.update()
+            .where(Knowledge.id == knowledge_id)
+            .values(wiki_status="processing")
+        )
+        session.commit()
+
         run_wiki_build(session, kb_id)
+
+        session.execute(
+            Knowledge.__table__.update()
+            .where(Knowledge.id == knowledge_id)
+            .values(wiki_status="completed")
+        )
+        session.commit()
         dbg("[Wiki] 构建完成")
     except Exception as e:
+        session.execute(
+            Knowledge.__table__.update()
+            .where(Knowledge.id == knowledge_id)
+            .values(wiki_status="failed")
+        )
+        session.commit()
         dbg(f"[Wiki] 失败: {e}")
         traceback.print_exc()
     finally:
@@ -153,6 +252,7 @@ class DocResponse(BaseModel):
     title: str | None
     file_name: str | None
     parse_status: str
+    needs_images: bool = False
 
     class Config:
         from_attributes = True
@@ -175,6 +275,7 @@ class ChunkResponse(BaseModel):
 async def upload_document(
     kb_id: str,
     file: UploadFile = File(...),
+    base_dir: str | None = None,
     session: Session = Depends(get_session),
 ):
     dbg(f"收到上传请求 kb_id={kb_id} file={file.filename}")
@@ -225,7 +326,18 @@ async def upload_document(
 
     log.info("上传成功", kb_id=kb_id, doc_id=doc.id, filename=filename, size=len(data))
 
-    redis_ok = _is_redis_available()
+    # 检测 md 文件中是否有未解析的相对路径图片引用
+    needs_images = False
+    if ext in (".md", ".markdown") and not base_dir:
+        import re as _re
+        text_preview = data.decode("utf-8", errors="replace")
+        has_md_img = _re.search(r"!\[[^\]]*\]\((?!http|data:|images/)[^)]+\)", text_preview)
+        has_html_img = _re.search(r"""<img\s+[^>]*src=["'](?!http|data:|images/)[^"']+["']""", text_preview, _re.IGNORECASE)
+        needs_images = bool(has_md_img or has_html_img)
+        if needs_images:
+            log.info("检测到本地图片引用", doc_id=doc.id, filename=filename)
+
+    redis_ok = _redis_available
     graph_enabled = (kb.graph_config or {}).get("enabled", True)
     wiki_enabled = (kb.wiki_config or {}).get("enabled", True)
 
@@ -239,15 +351,119 @@ async def upload_document(
 
         def _sync_process():
             bind_kb(kb_id, doc_id=doc.id, kb_name=kb.name, filename=doc.file_name or filename)
-            _run_parse_sync(doc.id, kb_id, kb.tenant_id, data, filename)
+            _run_parse_sync(doc.id, kb_id, kb.tenant_id, data, filename, base_dir=base_dir)
+
+            # 图谱和 Wiki 互不依赖，并行执行
+            post_threads = []
             if graph_enabled:
-                _run_graph_sync(kb_id, doc.id)
+                t = threading.Thread(target=_run_graph_sync, args=(kb_id, doc.id), daemon=True)
+                t.start()
+                post_threads.append(t)
             if wiki_enabled:
-                _run_wiki_sync(kb_id)
+                t = threading.Thread(target=_run_wiki_sync, args=(kb_id, doc.id), daemon=True)
+                t.start()
+                post_threads.append(t)
+            for t in post_threads:
+                t.join()
 
         threading.Thread(target=_sync_process, daemon=True).start()
         log.info("使用同步处理（Redis 不可用）", doc_id=doc.id)
 
+    return DocResponse(
+        id=doc.id,
+        knowledge_base_id=doc.knowledge_base_id,
+        title=doc.title,
+        file_name=doc.file_name,
+        parse_status=doc.parse_status,
+        needs_images=needs_images,
+    )
+
+
+class LocalImportBody(BaseModel):
+    kb_id: str
+    file_path: str
+
+
+@router.post("/import-local", response_model=DocResponse)
+def import_local_document(
+    body: LocalImportBody,
+    session: Session = Depends(get_session),
+):
+    """Import a file from local filesystem path (local deployment only)."""
+    file_path = Path(body.file_path)
+    if not file_path.is_file():
+        raise HTTPException(404, f"File not found: {body.file_path}")
+
+    kb = session.get(KnowledgeBase, body.kb_id)
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+
+    filename = file_path.name
+    ext = file_path.suffix.lower()
+    if ext not in settings.allowed_extensions:
+        raise HTTPException(415, f"File type '{ext}' not allowed. Allowed: {settings.allowed_extensions}")
+
+    data = file_path.read_bytes()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File too large. Max {settings.max_upload_size_mb}MB")
+
+    file_hash = hashlib.sha256(data).hexdigest()
+    existing = (
+        session.query(Knowledge)
+        .filter(
+            Knowledge.knowledge_base_id == body.kb_id,
+            Knowledge.file_hash == file_hash,
+            Knowledge.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if existing:
+        log.info("导入去重_文件已存在", kb_id=body.kb_id, file_hash=file_hash[:12], doc_id=existing.id)
+        return existing
+
+    doc = Knowledge(
+        id=uuid.uuid4().hex,
+        tenant_id=kb.tenant_id,
+        knowledge_base_id=body.kb_id,
+        type="file",
+        title=filename,
+        file_name=filename,
+        file_type="",
+        file_size=len(data),
+        file_hash=file_hash,
+        source="local_import",
+        parse_status="processing",
+    )
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+
+    # base_dir 自动推导为文件所在目录
+    base_dir = str(file_path.parent)
+    log.info("本地导入成功", kb_id=body.kb_id, doc_id=doc.id, filename=filename, base_dir=base_dir)
+
+    graph_enabled = (kb.graph_config or {}).get("enabled", True)
+    wiki_enabled = (kb.wiki_config or {}).get("enabled", True)
+
+    import threading
+
+    def _sync_process():
+        bind_kb(body.kb_id, doc_id=doc.id, kb_name=kb.name, filename=filename)
+        _run_parse_sync(doc.id, body.kb_id, kb.tenant_id, data, filename, base_dir=base_dir)
+
+        post_threads = []
+        if graph_enabled:
+            t = threading.Thread(target=_run_graph_sync, args=(body.kb_id, doc.id), daemon=True)
+            t.start()
+            post_threads.append(t)
+        if wiki_enabled:
+            t = threading.Thread(target=_run_wiki_sync, args=(body.kb_id, doc.id), daemon=True)
+            t.start()
+            post_threads.append(t)
+        for t in post_threads:
+            t.join()
+
+    threading.Thread(target=_sync_process, daemon=True).start()
     return doc
 
 
@@ -289,19 +505,22 @@ def get_document_status(doc_id: str, session: Session = Depends(get_session)):
         raise HTTPException(404, "Document not found")
 
     progress = {"stage": doc.parse_status, "percent": 100 if doc.parse_status == "completed" else 0}
-    try:
-        import redis as redis_lib
+    if _redis_available:
+        try:
+            import redis as redis_lib
 
-        r = redis_lib.from_url(settings.redis_url, socket_connect_timeout=2)
-        raw = r.get(f"task_progress:{doc_id}")
-        if raw:
-            progress = json.loads(raw)
-    except Exception:
-        pass
+            r = redis_lib.from_url(settings.redis_url, socket_connect_timeout=1)
+            raw = r.get(f"task_progress:{doc_id}")
+            if raw:
+                progress = json.loads(raw)
+        except Exception:
+            pass
 
     return {
         "doc_id": doc_id,
         "parse_status": doc.parse_status,
+        "graph_status": doc.graph_status,
+        "wiki_status": doc.wiki_status,
         "progress": progress,
         "error_message": doc.error_message,
     }
