@@ -15,11 +15,11 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from pyrag.models.base import Base
-from pyrag.chunking import chunk_document
-from pyrag.chunking.parent_child import ParentChildPair
-from pyrag.retrieval.fusion import rrf_fusion
-from pyrag.retrieval.hybrid import Candidate
+from knowlink.models.base import Base
+from knowlink.chunking import chunk_document
+from knowlink.chunking.parent_child import ParentChildPair
+from knowlink.retrieval.fusion import rrf_fusion
+from knowlink.retrieval.hybrid import Candidate
 
 
 GOLDEN_DOC = """# Machine Learning Basics

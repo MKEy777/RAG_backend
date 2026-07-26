@@ -1,4 +1,4 @@
-# pyrag 架构设计文档
+# knowlink 架构设计文档
 
 > 本文档是项目架构的**唯一权威记录**。当架构发生变更时，必须同步更新本文件。
 > 设计目标详见上级 `detail.md`（路径：`../detail.md`），参考实现 `../WeKnora/`。
@@ -34,15 +34,15 @@
 ## 三、项目目录结构
 
 ```
-pyrag/
+knowlink/
 ├── AGENTS.md                      # 编码规范与约束（同级目录）
 ├── docs/ARCHITECTURE.md           # ← 本文件
 ├── pyproject.toml
 ├── config/
 │   ├── settings.toml
 │   └── prompts/                   # wiki.yaml graph.yaml generation.yaml vlm.yaml faq.yaml
-├── src/pyrag/
-│   ├── settings.py                # pydantic-settings，env 前缀 PYRAG_
+├── src/knowlink/
+│   ├── settings.py                # pydantic-settings，env 前缀 KNOWLINK_
 │   ├── api/                       # FastAPI：app.py deps.py routers/{knowledge_bases,documents,retrieval,chat,wiki,graph}.py
 │   ├── models/                    # SQLAlchemy：base.py knowledge_base.py knowledge.py chunk.py artifact.py wiki.py(12表)
 │   ├── schemas/                   # Pydantic DTO
@@ -144,7 +144,7 @@ pyrag/
 - **撤回**：DELETE /documents/{id} 软删文档与切块、清理向量/关键词索引，入队 retract op（同队列 op='retract'）→ SourceRefs 定位受影响页面 → LLM 重写剩余内容 → 唯一来源页软删归档 → 触发 finalize
 - **重解析 replace**：解析完成显式入队本文档；reduce 前比对旧 source_refs 页面集，不再出现的 slug 撤回，重叠 slug 的合并提示词携带 `<replaced_document>` 指令替换旧贡献
 - **概览页 slug**：`overview/<doc_id>`（title 为文档标题）。与 detail.md 字面 `overview/<文档标题>` 不同，避免同名文档撞页
-- **Synthesis/Comparison**（设计裁决：detail.md §C 与§流程详解注矛盾，pyrag 无 Agent 工具体系，采 finalize 自动生成）：Synthesis 需 `kb.wiki_config.synthesis_model`（未配置跳过），输入全库已发布页面正文（上限 100 页）；Comparison 用默认模型，选 out_links 共现≥2 的实体/概念对，上限 3 组
+- **Synthesis/Comparison**（设计裁决：detail.md §C 与§流程详解注矛盾，knowlink 无 Agent 工具体系，采 finalize 自动生成）：Synthesis 需 `kb.wiki_config.synthesis_model`（未配置跳过），输入全库已发布页面正文（上限 100 页）；Comparison 用默认模型，选 out_links 共现≥2 的实体/概念对，上限 3 组
 - **Index 导航**：index 页 content 只存 LLM 引言；目录列表由 `GET /wiki/{kb_id}/index` 程序化组装（按类型分组 + folders 树），不靠 LLM
 - **FAQ**：`kb.question_generation_config.enabled` 开启后嵌入完成异步为每个子切块生成 3-5 问句（chunk_type=faq，并发 4）；手动导入 API `POST /faq/{kb_id}/items`（标准问+相似问分别嵌入，反例问仅存储不做抑制）；FAQ 类知识库检索走独立路径按标签优先级排序，不参与融合与 wiki 加权
 
@@ -302,10 +302,13 @@ class GraphStore(Protocol):
 | 2026-07-26 | 孤立标题块修复：split_by_heading 新增 _merge_heading_only 后置合并（参考 WeKnora chunker coalesceTinyChunks：仅原文连续时合并，以原文切片保持 span 不变量），仅含标题行的块并入下一块（文末则向前并），覆盖 _greedy_split 三条泄漏路径（围栏前 flush、大段落硬切前 flush、溢出 flush）及空 section 父块 | chunking/heading.py |
 | 2026-07-26 | 删除文档仍被检索召回修复：DELETE /documents/{id} 联动软删 chunks + 清理向量/关键词/图谱索引（GraphManager 新增 delete_document）；DELETE /kb/{id} 联动软删 chunks；expand_parent_chunks 增加 Knowledge.deleted_at 兜底过滤历史残留；LocalVectorStore meta 落盘（meta.json）、BM25KeywordIndex corpus/meta 落盘（corpus.json + indexed_ids.json 一致性校验），修复重启后按文档删除失效与 BM25 检索全空 | api/routers/{documents,knowledge_bases}.py、storage/{vector_local,keyword_bm25s}.py、graph/builder.py、generation/context.py |
 | 2026-07-26 | 检索 API 增加按请求参数覆写（召回/融合/精排/加权/父块扩展 10 项，Pydantic Field 约束边界） | api/routers/retrieval.py、前端检索测试页 |
+| 2026-07-26 | 项目改名 pyrag → KnowLink：包目录 src/pyrag → src/knowlink、发行名/锁文件、env 前缀 PYRAG_ → KNOWLINK_、默认库文件 pyrag.db → knowlink.db（含现有文件重命名）、前端品牌/包名、AGENTS.md 引用 | 全项目 |
 | 2026-07-26 | 索引对账：新增 indexing/reconcile.py（以 DB 为真值清理死块向量/语料、回填历史缺失 meta、重建旧版未落盘的 BM25 语料），lite 存储新增 reconcile 方法（非 Protocol 接口，full 不需要），startup 后台自动执行。根因：历史删除残留向量占据 top-k 名额（某 KB 1860 条中 1850 条死数据）被兜底过滤后召回数骤降 | indexing/reconcile.py、storage/{vector_local,keyword_bm25s}.py、api/app.py |
 | 2026-07-26 | Rate limit 豁免 /status 轮询：前端每 3s 轮询每个 processing 文档的状态，多文档并行上传时超过 60 次/分窗口导致正常请求（如 chat）被 429；/status 后缀路径不再计入限流窗口（与 TraceMiddleware 日志跳过规则对齐） | api/middleware.py |
 | 2026-07-26 | 文档状态改 SSE 推送：新增 GET /documents/status/stream?kb_id=（sse-starlette，服务端每 1s 查 DB、状态变化才推 status 事件、无 processing 后发 done 关流）；前端列表轮询 useDocStatusPolling 换为单连接 useDocStatusStream（EventSource），N 文档×20次/分的轮询降为 1 条长连接；状态详情弹窗的单文档轮询保留（需 Redis percent 进度） | api/routers/documents.py、前端 composables/useDocStatusPolling.ts、views/KnowledgeBase/DetailView.vue |
 | 2026-07-26 | 图谱对齐 WeKnora + 旧数据修复：① 提示词改从 config/prompts/graph.yaml 加载（移植 WeKnora graph_extraction.yaml 完整版：类型定义/抽取规则/few-shot/strength 分级；title 保持原文语言，不再强制中文）；② 关系 source_chunk_ids 改为两实体 chunk 并集（WeKnora findRelationChunkIDs，原实现误塑整批 chunk），重复关系 strength 加权平均；③ 修复 _delete_document_entities 按 knowledge_id 前缀匹配永不命中的 no-op bug（实体只增不减的根因），改为 GraphManager.reconcile(live_chunk_ids) 原语 + reset，接入启动对账/删除路由/图谱构建前清理；④ 新增 POST /graph/{kb_id}/rebuild 全量重建（后台线程逐文档，graph_status 追踪）与 DELETE /graph/{kb_id} 清空图谱 + 前端重建/刷新/删除按钮 | graph/builder.py、config/prompts/graph.yaml、indexing/reconcile.py、api/routers/{graph,documents}.py、tasks/parse_tasks.py、前端 views/Graph/GraphView.vue、api/graph.ts |
+| 2026-07-26 | Wiki 同名实体重复页修复：并发构建轮次互相看不到未提交页面，同一实体被不同 slug 建两页（如“宋子恺”）。① dedup_candidates 增加确定性短路：候选 name/aliases 与现有页 title/aliases 归一化后完全相同直接映射 slug，不依赖 LLM；LLM 失败时保留已有确定性合并；② finalize 新增 _merge_duplicate_titles 终态收敛：同 kind+同归一化 title 的 entity/concept 页确定性并入最早页（refs/aliases 并集、content 拼接），重复页归档 + 其 wiki_page 嵌入块软删并从向量/关键词索引移除，存量重复下次构建自愈 | wiki/{dedup,finalize}.py |
+| 2026-07-26 | 文档管理增强：① 上传时原文件字节落对象存储 originals/{kb_id}/{doc_id}/{filename}（metadata 记 original_key/original_filename），为重解析与下载提供源；② 新增 POST /documents/{id}/reparse（读存档字节复用解析分发，索引管线自带旧切块清理）、PATCH /documents/{id}（重命名，仅展示字段）、GET /documents/{id}/download；③ needs_images 检测持久化进 metadata + Knowledge.needs_images property（列表接口带出，前端按需显示补图按钮）；④ 任务进度加进程内存回退（get_progress：Redis 优先、内存兜底），同步模式 /status 也能返回 parsing/chunking/embedding/vlm 阶段；⑤ KB 新增 PATCH（name/description/enable_wiki/enable_graph/enable_qa），KBResponse 增 enable_qa | api/routers/documents.py、api/routers/knowledge_bases.py、tasks/parse_tasks.py、models/knowledge.py |
 
 ---
 

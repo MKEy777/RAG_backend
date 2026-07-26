@@ -8,19 +8,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from pyrag.models.database import SessionLocal, init_db
-from pyrag.models.knowledge import Knowledge
-from pyrag.models.knowledge_base import KnowledgeBase
-from pyrag.parsing.registry import parse_file
-from pyrag.indexing.pipeline import run_indexing_pipeline
-from pyrag.indexing.embedder import embed_texts
-from pyrag.retrieval.hybrid import hybrid_search
-from pyrag.retrieval.fusion import rrf_fusion
-from pyrag.storage.factory import get_storage
+from knowlink.models.database import SessionLocal, init_db
+from knowlink.models.knowledge import Knowledge
+from knowlink.models.knowledge_base import KnowledgeBase
+from knowlink.parsing.registry import parse_file
+from knowlink.indexing.pipeline import run_indexing_pipeline
+from knowlink.indexing.embedder import embed_texts
+from knowlink.retrieval.hybrid import hybrid_search
+from knowlink.retrieval.fusion import rrf_fusion
+from knowlink.storage.factory import get_storage
 
 
 async def main():
-    print("=== pyrag e2e smoke test ===")
+    print("=== knowlink e2e smoke test ===")
 
     print("[1/6] Initializing database...")
     init_db()

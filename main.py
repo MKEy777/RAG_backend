@@ -1,5 +1,5 @@
 """
-PyRAG 后端服务入口
+KnowLink 后端服务入口
 可直接在 PyCharm 中运行此文件启动服务
 """
 import os
@@ -34,7 +34,7 @@ def _is_redis_running(host="localhost", port=6379) -> bool:
 
 def _start_celery_worker():
     worker = subprocess.Popen(
-        [sys.executable, "-m", "celery", "-A", "pyrag.tasks.celery_app",
+        [sys.executable, "-m", "celery", "-A", "knowlink.tasks.celery_app",
          "worker", "--loglevel=info", "--pool=solo"],
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
     )
@@ -47,7 +47,7 @@ def _start_celery_worker():
             pass
 
     atexit.register(_cleanup)
-    os.environ["PYRAG_CELERY_WORKER_PID"] = str(worker.pid)
+    os.environ["KNOWLINK_CELERY_WORKER_PID"] = str(worker.pid)
     print("  [✓] Celery Worker 已启动")
 
 
@@ -55,7 +55,7 @@ if __name__ == "__main__":
     _kill_port(8000)
 
     print("=" * 50)
-    print("  PyRAG 后端服务启动中...")
+    print("  KnowLink 后端服务启动中...")
     print("=" * 50)
     print()
     print("  后端地址: http://localhost:8000")
@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
     # 检测 Redis 并决定是否启动 Celery
     if _is_redis_running():
-        if "PYRAG_CELERY_WORKER_PID" not in os.environ:
+        if "KNOWLINK_CELERY_WORKER_PID" not in os.environ:
             _start_celery_worker()
     else:
         print("  [!] Redis 未运行，跳过 Celery Worker")
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         print()
 
     uvicorn.run(
-        "pyrag.api.app:app",
+        "knowlink.api.app:app",
         host="127.0.0.1",
         port=8000,
         log_level="info",

@@ -7,4 +7,14 @@ dist/
 build/
 .pytest_cache/
 *.db
+*.db-shm
+*.db-wal
 data/
+.venv/
+.ruff_cache/
+.mypy_cache/
+.idea/
+.vscode/
+*.log
+.DS_Store
+docs/superpowers/

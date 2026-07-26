@@ -6,11 +6,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from pyrag.parsing.registry import parse_file
-from pyrag.chunking import chunk_document
-from pyrag.chunking.parent_child import ParentChildPair
-from pyrag.llm.client import get_llm_client
-from pyrag.indexing.embedder import build_embed_content
+from knowlink.parsing.registry import parse_file
+from knowlink.chunking import chunk_document
+from knowlink.chunking.parent_child import ParentChildPair
+from knowlink.llm.client import get_llm_client
+from knowlink.indexing.embedder import build_embed_content
 
 
 async def main():

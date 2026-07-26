@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from pyrag.api.routers import retrieval as r
-from pyrag.models.knowledge_base import KnowledgeBase
+from knowlink.api.routers import retrieval as r
+from knowlink.models.knowledge_base import KnowledgeBase
 
 
 def test_request_accepts_override_params():
@@ -94,7 +94,7 @@ async def test_route_skips_rerank_and_expand_when_disabled(db_session, monkeypat
         return [], []
 
     def fake_fusion(vec, kw, k=None, vector_weight=None, keyword_weight=None):
-        from pyrag.retrieval.hybrid import Candidate
+        from knowlink.retrieval.hybrid import Candidate
         return [Candidate(chunk_id=f"c{i}", score=1.0 - i * 0.1, channel="vector") for i in range(5)]
 
     async def fake_rerank(query, candidates, top_k=None, threshold=None):

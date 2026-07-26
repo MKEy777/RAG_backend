@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pyrag.tasks.celery_app import celery_app
+from knowlink.tasks.celery_app import celery_app
 
 
 def main():

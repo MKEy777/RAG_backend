@@ -5,9 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from pyrag.parsing.registry import parse_file
-from pyrag.chunking import chunk_document
-from pyrag.chunking.parent_child import ParentChildPair
+from knowlink.parsing.registry import parse_file
+from knowlink.chunking import chunk_document
+from knowlink.chunking.parent_child import ParentChildPair
 
 PDF_PATH = Path(r"c:\Users\VECTOR\Desktop\RAG\测试文件") / "【论文精读 & 面试题】Transformer论文逐段精读.pdf"
 

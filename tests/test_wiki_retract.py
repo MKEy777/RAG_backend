@@ -1,7 +1,7 @@
 import pytest
 
-from pyrag.models.chunk import Chunk
-from pyrag.models.wiki import WikiPage
+from knowlink.models.chunk import Chunk
+from knowlink.models.wiki import WikiPage
 
 
 def _page(slug, title, source_refs, chunk_refs=None, content="旧内容"):
@@ -21,7 +21,7 @@ def _chunk(cid, knowledge_id):
 
 
 async def test_retract_sole_source_archives_page(db_session, monkeypatch):
-    from pyrag.wiki.retract import retract_document
+    from knowlink.wiki.retract import retract_document
 
     db_session.add(_page("entity/a", "A", ["doc1|文档一"]))
     db_session.commit()
@@ -32,7 +32,7 @@ async def test_retract_sole_source_archives_page(db_session, monkeypatch):
 
 
 async def test_retract_multi_source_rewrites_and_strips_refs(db_session, fake_llm_factory, monkeypatch):
-    from pyrag.wiki.retract import retract_document
+    from knowlink.wiki.retract import retract_document
 
     # chunk id 是 uuid 风格，不以 doc id 开头 —— 旧实现的 startswith 过滤会漏删
     db_session.add(_chunk("aaa111", "doc1"))
@@ -41,7 +41,7 @@ async def test_retract_multi_source_rewrites_and_strips_refs(db_session, fake_ll
     db_session.commit()
 
     llm = fake_llm_factory(["SUMMARY: 重写后\n仅剩 doc2 贡献的内容"])
-    monkeypatch.setattr("pyrag.wiki.retract.get_llm_client", lambda: llm)
+    monkeypatch.setattr("knowlink.wiki.retract.get_llm_client", lambda: llm)
 
     await retract_document(db_session, "kb1", "doc1", "文档一")
 
@@ -53,7 +53,7 @@ async def test_retract_multi_source_rewrites_and_strips_refs(db_session, fake_ll
 
 
 async def test_retract_pages_subset_only(db_session, fake_llm_factory, monkeypatch):
-    from pyrag.wiki.retract import retract_pages
+    from knowlink.wiki.retract import retract_pages
 
     db_session.add(_page("entity/c", "C", ["doc1|文档一"]))
     db_session.add(_page("entity/d", "D", ["doc1|文档一"]))

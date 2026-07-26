@@ -1,4 +1,4 @@
-from pyrag.prompts.loader import get_prompt, load_prompt_file
+from knowlink.prompts.loader import get_prompt, load_prompt_file
 
 REQUIRED_KEYS = [
     "WikiSummaryPrompt", "WikiCandidateSlugPrompt", "WikiChunkCitationPrompt",
@@ -19,9 +19,9 @@ def test_wiki_prompts_require_chinese_output():
 
 
 def test_no_hardcoded_prompts_in_wiki_modules():
-    import pyrag.wiki.finalize as finalize
-    import pyrag.wiki.ingest as ingest
-    import pyrag.wiki.merge as merge
+    import knowlink.wiki.finalize as finalize
+    import knowlink.wiki.ingest as ingest
+    import knowlink.wiki.merge as merge
     for mod in (ingest, merge, finalize):
         hardcoded = [n for n in vars(mod) if n.startswith("WIKI_") and n.endswith("_PROMPT")]
         assert not hardcoded, f"{mod.__name__} still hardcodes {hardcoded}"

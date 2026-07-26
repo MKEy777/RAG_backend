@@ -614,6 +614,91 @@ wheels = [
 ]
 
 [[package]]
+name = "knowlink"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "alembic" },
+    { name = "bm25s" },
+    { name = "celery", extra = ["redis"] },
+    { name = "fastapi" },
+    { name = "filetype" },
+    { name = "httpx" },
+    { name = "jieba" },
+    { name = "json-repair" },
+    { name = "markitdown" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "openpyxl" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pillow" },
+    { name = "prometheus-client" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pypdfium2" },
+    { name = "python-docx" },
+    { name = "python-multipart" },
+    { name = "python-pptx" },
+    { name = "pyyaml" },
+    { name = "redis" },
+    { name = "sqlalchemy" },
+    { name = "sse-starlette" },
+    { name = "structlog" },
+    { name = "tenacity" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "fakeredis" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "respx" },
+]
+hnsw = [
+    { name = "hnswlib" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.13" },
+    { name = "bm25s", specifier = ">=0.2" },
+    { name = "celery", extras = ["redis"], specifier = ">=5.4" },
+    { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.23" },
+    { name = "fastapi", specifier = ">=0.110" },
+    { name = "filetype", specifier = ">=1.2" },
+    { name = "hnswlib", marker = "extra == 'hnsw'", specifier = ">=0.8" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "jieba", specifier = ">=0.42" },
+    { name = "json-repair", specifier = ">=0.30" },
+    { name = "markitdown", specifier = ">=0.1" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "openpyxl", specifier = ">=3.1" },
+    { name = "pandas", specifier = ">=2.2" },
+    { name = "pillow", specifier = ">=10.3" },
+    { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydantic-settings", specifier = ">=2.2" },
+    { name = "pypdfium2", specifier = ">=4.30" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "python-docx", specifier = ">=1.1" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "python-pptx", specifier = ">=0.6" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "redis", specifier = ">=5.0" },
+    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "sse-starlette", specifier = ">=2.0" },
+    { name = "structlog", specifier = ">=24.1" },
+    { name = "tenacity", specifier = ">=8.2" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
+]
+provides-extras = ["hnsw", "dev"]
+
+[[package]]
 name = "kombu"
 version = "5.6.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1633,91 +1718,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/c3/08b62718faf2f6b6aa49207626e3113ff3ec1b3cd076c0ef8fd852f0e57c/pypdfium2-5.12.1-py3-none-win_amd64.whl", hash = "sha256:9609be73a6701a68f29dffe0335f7a2e4b3ba581542ed65d35d49f761a4600ca", size = 3859845, upload-time = "2026-07-17T10:01:19.417Z" },
     { url = "https://files.pythonhosted.org/packages/6c/d5/ad551e55790134c8bc87ea16e0866a3721def0620fbfa19112c8ad4a25a6/pypdfium2-5.12.1-py3-none-win_arm64.whl", hash = "sha256:afc0b7e0c975a429abc75875209ce17b66d749f6ac5cbe8ba72470e83901e304", size = 3674605, upload-time = "2026-07-17T10:01:21.008Z" },
 ]
-
-[[package]]
-name = "pyrag"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "alembic" },
-    { name = "bm25s" },
-    { name = "celery", extra = ["redis"] },
-    { name = "fastapi" },
-    { name = "filetype" },
-    { name = "httpx" },
-    { name = "jieba" },
-    { name = "json-repair" },
-    { name = "markitdown" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "openpyxl" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pillow" },
-    { name = "prometheus-client" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pypdfium2" },
-    { name = "python-docx" },
-    { name = "python-multipart" },
-    { name = "python-pptx" },
-    { name = "pyyaml" },
-    { name = "redis" },
-    { name = "sqlalchemy" },
-    { name = "sse-starlette" },
-    { name = "structlog" },
-    { name = "tenacity" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "fakeredis" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "respx" },
-]
-hnsw = [
-    { name = "hnswlib" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.13" },
-    { name = "bm25s", specifier = ">=0.2" },
-    { name = "celery", extras = ["redis"], specifier = ">=5.4" },
-    { name = "fakeredis", marker = "extra == 'dev'", specifier = ">=2.23" },
-    { name = "fastapi", specifier = ">=0.110" },
-    { name = "filetype", specifier = ">=1.2" },
-    { name = "hnswlib", marker = "extra == 'hnsw'", specifier = ">=0.8" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "jieba", specifier = ">=0.42" },
-    { name = "json-repair", specifier = ">=0.30" },
-    { name = "markitdown", specifier = ">=0.1" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "openpyxl", specifier = ">=3.1" },
-    { name = "pandas", specifier = ">=2.2" },
-    { name = "pillow", specifier = ">=10.3" },
-    { name = "prometheus-client", specifier = ">=0.20" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pydantic-settings", specifier = ">=2.2" },
-    { name = "pypdfium2", specifier = ">=4.30" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "python-docx", specifier = ">=1.1" },
-    { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "python-pptx", specifier = ">=0.6" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "redis", specifier = ">=5.0" },
-    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
-    { name = "sqlalchemy", specifier = ">=2.0" },
-    { name = "sse-starlette", specifier = ">=2.0" },
-    { name = "structlog", specifier = ">=24.1" },
-    { name = "tenacity", specifier = ">=8.2" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
-]
-provides-extras = ["hnsw", "dev"]
 
 [[package]]
 name = "pyreadline3"

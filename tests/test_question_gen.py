@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from pyrag.models.chunk import Chunk
-from pyrag.models.knowledge_base import KnowledgeBase
+from knowlink.models.chunk import Chunk
+from knowlink.models.knowledge_base import KnowledgeBase
 
 
 def _kb(qg_config=None):
@@ -28,20 +28,20 @@ class FakeVector:
 
 
 async def test_question_gen_disabled_by_default(db_session, fake_llm_factory, monkeypatch):
-    from pyrag.indexing.question_gen import generate_faq_chunks
+    from knowlink.indexing.question_gen import generate_faq_chunks
 
     db_session.add(_kb(None))
     db_session.add(_chunk("c1", "RAG 结合检索与生成。"))
     db_session.commit()
 
     llm = fake_llm_factory([])
-    monkeypatch.setattr("pyrag.indexing.question_gen.get_llm_client", lambda: llm)
+    monkeypatch.setattr("knowlink.indexing.question_gen.get_llm_client", lambda: llm)
     n = await generate_faq_chunks(db_session, "kb1", "doc1", 1, "文档一")
     assert n == 0 and llm.calls == []
 
 
 async def test_question_gen_creates_faq_chunks(db_session, fake_llm_factory, monkeypatch):
-    from pyrag.indexing import question_gen
+    from knowlink.indexing import question_gen
 
     db_session.add(_kb({"enabled": True}))
     db_session.add(_chunk("c1", "RAG 结合检索与生成。"))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pyrag.parsing.registry import detect_format, parse_file
-from pyrag.parsing.base import ParseResult
+from knowlink.parsing.registry import detect_format, parse_file
+from knowlink.parsing.base import ParseResult
 
 
 def test_detect_pdf():

@@ -1,7 +1,7 @@
 import pytest
 
-from pyrag.models.knowledge_base import KnowledgeBase
-from pyrag.models.wiki import WikiPage
+from knowlink.models.knowledge_base import KnowledgeBase
+from knowlink.models.wiki import WikiPage
 
 
 def _page(slug, title, kind="entity", content="内容", out_links=None):
@@ -20,7 +20,7 @@ def _kb(wiki_config=None):
 
 
 async def test_synthesis_skipped_without_model(db_session, fake_llm_factory, monkeypatch):
-    from pyrag.wiki.synthesis import generate_synthesis
+    from knowlink.wiki.synthesis import generate_synthesis
 
     db_session.add(_kb())
     db_session.add(_page("entity/a", "A"))
@@ -28,13 +28,13 @@ async def test_synthesis_skipped_without_model(db_session, fake_llm_factory, mon
     db_session.commit()
 
     llm = fake_llm_factory([])
-    monkeypatch.setattr("pyrag.wiki.synthesis.get_llm_client", lambda: llm)
+    monkeypatch.setattr("knowlink.wiki.synthesis.get_llm_client", lambda: llm)
     await generate_synthesis(db_session, "kb1", 1)
     assert llm.calls == []  # detail.md §C5 未配置综述模型跳过
 
 
 async def test_synthesis_uses_configured_model(db_session, fake_llm_factory, monkeypatch):
-    from pyrag.wiki.synthesis import generate_synthesis
+    from knowlink.wiki.synthesis import generate_synthesis
 
     db_session.add(_kb({"synthesis_model": "strong-model"}))
     db_session.add(_page("entity/a", "A"))
@@ -42,7 +42,7 @@ async def test_synthesis_uses_configured_model(db_session, fake_llm_factory, mon
     db_session.commit()
 
     llm = fake_llm_factory(["SUMMARY: 综览\n## 主题串讲\n[[entity/a|A]] 与 [[entity/b|B]]"])
-    monkeypatch.setattr("pyrag.wiki.synthesis.get_llm_client", lambda: llm)
+    monkeypatch.setattr("knowlink.wiki.synthesis.get_llm_client", lambda: llm)
     await generate_synthesis(db_session, "kb1", 1)
 
     assert llm.calls[0]["model"] == "strong-model"
@@ -51,7 +51,7 @@ async def test_synthesis_uses_configured_model(db_session, fake_llm_factory, mon
 
 
 async def test_comparison_generated_for_colinked_pair(db_session, fake_llm_factory, monkeypatch):
-    from pyrag.wiki.synthesis import generate_comparisons
+    from knowlink.wiki.synthesis import generate_comparisons
 
     db_session.add(_kb())
     db_session.add(_page("entity/a", "A"))
@@ -62,7 +62,7 @@ async def test_comparison_generated_for_colinked_pair(db_session, fake_llm_facto
     db_session.commit()
 
     llm = fake_llm_factory(["SUMMARY: 对照\n| 维度 | A | B |\n|---|---|---|"])
-    monkeypatch.setattr("pyrag.wiki.synthesis.get_llm_client", lambda: llm)
+    monkeypatch.setattr("knowlink.wiki.synthesis.get_llm_client", lambda: llm)
     await generate_comparisons(db_session, "kb1", 1)
 
     page = db_session.query(WikiPage).filter(WikiPage.kind == "comparison").one()
@@ -70,7 +70,7 @@ async def test_comparison_generated_for_colinked_pair(db_session, fake_llm_facto
 
 
 async def test_comparison_skipped_below_threshold(db_session, fake_llm_factory, monkeypatch):
-    from pyrag.wiki.synthesis import generate_comparisons
+    from knowlink.wiki.synthesis import generate_comparisons
 
     db_session.add(_kb())
     db_session.add(_page("entity/a", "A"))
@@ -79,6 +79,6 @@ async def test_comparison_skipped_below_threshold(db_session, fake_llm_factory, 
     db_session.commit()
 
     llm = fake_llm_factory([])
-    monkeypatch.setattr("pyrag.wiki.synthesis.get_llm_client", lambda: llm)
+    monkeypatch.setattr("knowlink.wiki.synthesis.get_llm_client", lambda: llm)
     await generate_comparisons(db_session, "kb1", 1)
     assert llm.calls == []

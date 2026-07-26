@@ -8,8 +8,8 @@ from sqlalchemy import engine_from_config, pool
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from pyrag.models.base import Base  # noqa: E402
-from pyrag.settings import settings  # noqa: E402
+from knowlink.models.base import Base  # noqa: E402
+from knowlink.settings import settings  # noqa: E402
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

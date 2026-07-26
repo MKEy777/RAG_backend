@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from pyrag.models.chunk import Chunk
-from pyrag.models.knowledge_base import KnowledgeBase
+from knowlink.models.chunk import Chunk
+from knowlink.models.knowledge_base import KnowledgeBase
 
 
 class FakeVector:
@@ -18,7 +18,7 @@ class FakeVector:
 
 
 async def test_import_faq_item_embeds_each_question(db_session, monkeypatch):
-    from pyrag.api.routers import faq as faq_router
+    from knowlink.api.routers import faq as faq_router
 
     db_session.add(KnowledgeBase(id="kb1", tenant_id=1, name="kb", type="faq", embedding_model_id="m1"))
     db_session.commit()
@@ -53,8 +53,8 @@ async def test_import_faq_item_embeds_each_question(db_session, monkeypatch):
 
 
 def test_faq_search_tag_priority_ordering():
-    from pyrag.retrieval.faq import sort_faq_candidates
-    from pyrag.retrieval.hybrid import Candidate
+    from knowlink.retrieval.faq import sort_faq_candidates
+    from knowlink.retrieval.hybrid import Candidate
 
     c1 = Candidate(chunk_id="1", score=0.9, channel="faq", chunk_type="faq",
                    document_id="", metadata={"tags": ["其他"]})

@@ -1,7 +1,7 @@
 import pytest
 
-from pyrag.models.wiki import WikiPage
-from pyrag.wiki.ingest import MapResult
+from knowlink.models.wiki import WikiPage
+from knowlink.wiki.ingest import MapResult
 
 
 def _page(slug, title, source_refs, content="旧内容", kind="entity"):
@@ -13,14 +13,14 @@ def _page(slug, title, source_refs, content="旧内容", kind="entity"):
 
 
 async def test_reparse_retracts_stale_slugs(db_session, fake_llm_factory, fake_storage, monkeypatch):
-    from pyrag.wiki.merge import reduce_pages
+    from knowlink.wiki.merge import reduce_pages
 
     # doc1 上次贡献了 entity/old；本次抽取不再包含它 → 应撤回归档
     db_session.add(_page("entity/old", "Old", ["doc1|文档一"]))
     db_session.commit()
 
-    monkeypatch.setattr("pyrag.wiki.merge.get_storage", lambda: fake_storage)
-    monkeypatch.setattr("pyrag.wiki.dedup.get_llm_client", lambda: fake_llm_factory([]))
+    monkeypatch.setattr("knowlink.wiki.merge.get_storage", lambda: fake_storage)
+    monkeypatch.setattr("knowlink.wiki.dedup.get_llm_client", lambda: fake_llm_factory([]))
 
     mr = MapResult(overview_content="新概览", overview_summary="s", candidates=[])
     await reduce_pages(db_session, "kb1", 1, "doc1", "文档一", mr)
@@ -30,15 +30,15 @@ async def test_reparse_retracts_stale_slugs(db_session, fake_llm_factory, fake_s
 
 
 async def test_reparse_same_slug_passes_replace_instruction(db_session, fake_llm_factory, fake_storage, monkeypatch):
-    from pyrag.wiki.merge import reduce_pages
+    from knowlink.wiki.merge import reduce_pages
 
     db_session.add(_page("entity/keep", "Keep", ["doc1|文档一"], content="doc1 旧事实"))
     db_session.commit()
 
     merge_llm = fake_llm_factory(["SUMMARY: 替换后\ndoc1 新事实"])
-    monkeypatch.setattr("pyrag.wiki.merge.get_llm_client", lambda: merge_llm)
-    monkeypatch.setattr("pyrag.wiki.merge.get_storage", lambda: fake_storage)
-    monkeypatch.setattr("pyrag.wiki.dedup.get_llm_client", lambda: fake_llm_factory(['{"merges": {}}']))
+    monkeypatch.setattr("knowlink.wiki.merge.get_llm_client", lambda: merge_llm)
+    monkeypatch.setattr("knowlink.wiki.merge.get_storage", lambda: fake_storage)
+    monkeypatch.setattr("knowlink.wiki.dedup.get_llm_client", lambda: fake_llm_factory(['{"merges": {}}']))
 
     mr = MapResult(candidates=[{
         "slug": "entity/keep", "name": "Keep", "_type": "entity",

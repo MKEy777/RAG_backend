@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from pyrag.models.base import Base
+from knowlink.models.base import Base
 
 
 @pytest.fixture

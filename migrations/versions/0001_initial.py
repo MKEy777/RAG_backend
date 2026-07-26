@@ -22,11 +22,11 @@ def upgrade() -> None:
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-    from pyrag.models.base import Base
-    from pyrag.models import (  # noqa: F401
+    from knowlink.models.base import Base
+    from knowlink.models import (  # noqa: F401
         KnowledgeBase, Knowledge, Artifact, Chunk,
     )
-    from pyrag.models.wiki import (  # noqa: F401
+    from knowlink.models.wiki import (  # noqa: F401
         WikiBuildRequest, WikiPendingOperation, WikiDeadLetter, WikiLock,
         WikiPage, WikiChunk, WikiSourceRef, WikiPageRevision,
         WikiRelease, WikiReleasePage, WikiActiveRelease,
@@ -42,11 +42,11 @@ def downgrade() -> None:
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-    from pyrag.models.base import Base
-    from pyrag.models import (  # noqa: F401
+    from knowlink.models.base import Base
+    from knowlink.models import (  # noqa: F401
         KnowledgeBase, Knowledge, Artifact, Chunk,
     )
-    from pyrag.models.wiki import (  # noqa: F401
+    from knowlink.models.wiki import (  # noqa: F401
         WikiBuildRequest, WikiPendingOperation, WikiDeadLetter, WikiLock,
         WikiPage, WikiChunk, WikiSourceRef, WikiPageRevision,
         WikiRelease, WikiReleasePage, WikiActiveRelease,

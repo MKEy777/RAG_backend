@@ -17,10 +17,10 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from pyrag.models.base import Base
-from pyrag.models.knowledge import Knowledge
-from pyrag.models.knowledge_base import KnowledgeBase
-from pyrag.settings import settings
+from knowlink.models.base import Base
+from knowlink.models.knowledge import Knowledge
+from knowlink.models.knowledge_base import KnowledgeBase
+from knowlink.settings import settings
 
 from tests.fixtures.llm_responses import (
     mock_chat_response,
@@ -92,8 +92,8 @@ async def test_full_pipeline(db_session, sample_kb, tmp_path):
         )
     )
 
-    from pyrag.indexing.pipeline import run_indexing_pipeline
-    from pyrag.models.chunk import Chunk
+    from knowlink.indexing.pipeline import run_indexing_pipeline
+    from knowlink.models.chunk import Chunk
 
     doc = Knowledge(
         id="doc-test-001",
@@ -156,10 +156,10 @@ async def test_retrieval_after_indexing(db_session, sample_kb, tmp_path):
         )
     )
 
-    from pyrag.indexing.embedder import embed_texts
-    from pyrag.indexing.pipeline import run_indexing_pipeline
-    from pyrag.retrieval.fusion import rrf_fusion
-    from pyrag.retrieval.hybrid import hybrid_search
+    from knowlink.indexing.embedder import embed_texts
+    from knowlink.indexing.pipeline import run_indexing_pipeline
+    from knowlink.retrieval.fusion import rrf_fusion
+    from knowlink.retrieval.hybrid import hybrid_search
 
     doc = Knowledge(
         id="doc-test-002",
@@ -201,7 +201,7 @@ async def test_embed_failure_marks_doc_failed(db_session, sample_kb):
         side_effect=httpx.ConnectError("Connection refused")
     )
 
-    from pyrag.indexing.pipeline import run_indexing_pipeline
+    from knowlink.indexing.pipeline import run_indexing_pipeline
 
     doc = Knowledge(
         id="doc-test-003",

@@ -1,5 +1,5 @@
-from pyrag.api.routers.wiki import build_index_payload
-from pyrag.models.wiki import WikiFolder, WikiPage
+from knowlink.api.routers.wiki import build_index_payload
+from knowlink.models.wiki import WikiFolder, WikiPage
 
 
 def _page(slug, title, kind, folder_id=None, summary="s"):
