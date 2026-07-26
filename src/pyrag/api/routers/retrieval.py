@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ...generation.context import expand_parent_chunks
@@ -22,9 +22,19 @@ router = APIRouter()
 class RetrievalRequest(BaseModel):
     kb_ids: list[str]
     query: str
-    top_k: int = 10
+    top_k: int = Field(10, ge=1, le=50)
     enable_graph: bool = False
     enable_wiki_boost: bool = False
+    enable_rerank: bool = True
+    expand_parent: bool = True
+    recall_top_k: int | None = Field(None, ge=1, le=200)
+    vector_threshold: float | None = Field(None, ge=0.0, le=1.0)
+    keyword_threshold: float | None = Field(None, ge=0.0, le=1.0)
+    rrf_k: int | None = Field(None, ge=1, le=1000)
+    vector_weight: float | None = Field(None, ge=0.0, le=1.0)
+    keyword_weight: float | None = Field(None, ge=0.0, le=1.0)
+    rerank_threshold: float | None = Field(None, ge=0.0, le=1.0)
+    wiki_boost: float | None = Field(None, ge=1.0, le=3.0)
 
     @field_validator("kb_ids")
     @classmethod
@@ -79,11 +89,21 @@ async def retrieve(body: RetrievalRequest, session: Session = Depends(get_sessio
             doc_kb_ids.append(kb_id)
 
     for kb_id in doc_kb_ids:
-        vec, kw = await hybrid_search(kb_id, body.query, query_vector)
+        vec, kw = await hybrid_search(
+            kb_id, body.query, query_vector,
+            top_k=body.recall_top_k,
+            vector_threshold=body.vector_threshold,
+            keyword_threshold=body.keyword_threshold,
+        )
         all_vec.extend(vec)
         all_kw.extend(kw)
 
-    fused = rrf_fusion(all_vec, all_kw)
+    fused = rrf_fusion(
+        all_vec, all_kw,
+        k=body.rrf_k,
+        vector_weight=body.vector_weight,
+        keyword_weight=body.keyword_weight,
+    )
 
     if body.enable_graph:
         from ...retrieval.graph_boost import graph_boost
@@ -94,11 +114,18 @@ async def retrieve(body: RetrievalRequest, session: Session = Depends(get_sessio
             fused.extend(graph_hits)
             fused.sort(key=lambda x: x.score, reverse=True)
 
-    fused = expand_parent_chunks(session, fused)
-    reranked = await rerank_stage(body.query, fused, top_k=body.top_k)
+    if body.expand_parent:
+        fused = expand_parent_chunks(session, fused)
+
+    if body.enable_rerank:
+        reranked = await rerank_stage(
+            body.query, fused, top_k=body.top_k, threshold=body.rerank_threshold
+        )
+    else:
+        reranked = fused[: body.top_k]
 
     if body.enable_wiki_boost:
-        reranked = apply_wiki_boost(reranked)
+        reranked = apply_wiki_boost(reranked, boost=body.wiki_boost)
 
     hits = [
         RetrievalHit(
