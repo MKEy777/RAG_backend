@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     # faq
     faq_max_iterations: int = 5  # detail.md §FAQ
     faq_initial_top_k_multiplier: int = 3  # detail.md §FAQ
+    faq_question_concurrency: int = 4  # detail.md §FAQ
 
     # indexing
     index_batch_size: int = 40  # detail.md §嵌入
