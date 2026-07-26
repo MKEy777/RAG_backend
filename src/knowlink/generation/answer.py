@@ -7,6 +7,7 @@ from ..llm.client import get_llm_client
 from ..retrieval.hybrid import Candidate
 from .citations import CITATION_PROTOCOL, build_references
 from .context import build_context_xml
+from .suggestions import generate_suggestions
 
 SYSTEM_PROMPT = (
     "You are a retrieval-augmented assistant. Answer ONLY based on the provided sources. "
@@ -22,6 +23,7 @@ async def generate_answer_stream(
     query: str,
     candidates: list[Candidate],
     history: list[dict] | None = None,
+    suggest: bool = False,
 ) -> AsyncIterator[dict]:
     if not candidates:
         yield _sse_event("message", {"content": NO_ANSWER_MSG})
@@ -42,13 +44,19 @@ async def generate_answer_stream(
 
     client = get_llm_client()
     emitted = False
+    answer_parts: list[str] = []
     try:
         async for token in client.chat_stream(messages):
             emitted = True
+            answer_parts.append(token)
             yield _sse_event("message", {"content": token})
     except Exception as e:
-        # 保留已输出内容，错误走独立事件，前端按事件类型展示
         yield _sse_event("error", {"message": "生成中断，请重试", "detail": repr(e)[:200], "partial": emitted})
+
+    if suggest and answer_parts:
+        items = await generate_suggestions(query, "".join(answer_parts))
+        if items:
+            yield _sse_event("suggestions", {"suggestions": items})
 
     yield _sse_event("references", {"references": references})
     yield _sse_event("done", {})

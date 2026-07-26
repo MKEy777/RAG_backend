@@ -51,7 +51,7 @@ async def chat(body: ChatRequest, session: Session = Depends(get_session)):
         async def event_gen():
             answer_parts: list[str] = []
             refs: list = []
-            async for event in generate_answer_stream(body.query, candidates, history):
+            async for event in generate_answer_stream(body.query, candidates, history, suggest=True):
                 if event["event"] == "message":
                     answer_parts.append(json.loads(event["data"]).get("content", ""))
                 elif event["event"] == "references":
