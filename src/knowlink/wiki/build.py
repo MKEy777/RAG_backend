@@ -163,5 +163,12 @@ async def _wiki_build_async(
         except Exception as e:
             log.error("Wiki构建_文档处理失败", kb_id=kb_id, document_id=op.document_id, error=str(e)[:200])
             mark_failed(session, op, str(e))
+            continue
+        try:
+            from ..indexing.question_gen import generate_faq_chunks
+
+            await generate_faq_chunks(session, kb_id, op.document_id, tenant_id, doc_title)
+        except Exception as e:
+            log.error("FAQ问句生成失败", kb_id=kb_id, document_id=op.document_id, error=str(e)[:200])
 
     return processed + processed_retracts

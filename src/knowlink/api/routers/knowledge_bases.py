@@ -30,7 +30,6 @@ class KBResponse(BaseModel):
     description: str | None
     enable_wiki: bool = True
     enable_graph: bool = True
-    enable_qa: bool = False
 
     class Config:
         from_attributes = True
@@ -41,7 +40,6 @@ class KBUpdate(BaseModel):
     description: str | None = None
     enable_wiki: bool | None = None
     enable_graph: bool | None = None
-    enable_qa: bool | None = None
 
 
 def _kb_response(kb: KnowledgeBase) -> KBResponse:
@@ -52,7 +50,6 @@ def _kb_response(kb: KnowledgeBase) -> KBResponse:
         description=kb.description,
         enable_wiki=(kb.wiki_config or {}).get("enabled", True),
         enable_graph=(kb.graph_config or {}).get("enabled", True),
-        enable_qa=(kb.question_generation_config or {}).get("enabled", False),
     )
 
 
@@ -113,8 +110,6 @@ def update_kb(kb_id: str, body: KBUpdate, session: Session = Depends(get_session
         kb.wiki_config = {**(kb.wiki_config or {}), "enabled": body.enable_wiki}
     if body.enable_graph is not None:
         kb.graph_config = {**(kb.graph_config or {}), "enabled": body.enable_graph}
-    if body.enable_qa is not None:
-        kb.question_generation_config = {**(kb.question_generation_config or {}), "enabled": body.enable_qa}
     session.commit()
     session.refresh(kb)
     return _kb_response(kb)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,7 +12,6 @@ from ..llm.json_repair import parse_json_array
 from ..llm.retry import wiki_llm_retry
 from ..logging import get_logger
 from ..models.chunk import Chunk
-from ..models.knowledge_base import KnowledgeBase
 from ..prompts.loader import get_prompt
 from ..settings import settings
 from ..storage.factory import get_storage
@@ -23,10 +23,24 @@ log = get_logger("question_gen")
 async def generate_faq_chunks(
     session: Session, kb_id: str, knowledge_id: str, tenant_id: int, doc_title: str
 ) -> int:
-    kb = session.get(KnowledgeBase, kb_id)
-    cfg = (kb.question_generation_config or {}) if kb else {}
-    if not cfg.get("enabled", False):
-        return 0
+    # 幂等：重建时先清掉本文档旧的自动生成问句
+    stale = [
+        c
+        for c in session.execute(
+            select(Chunk).where(
+                Chunk.knowledge_id == knowledge_id,
+                Chunk.chunk_type == "faq",
+                Chunk.deleted_at.is_(None),
+            )
+        ).scalars()
+        if (c.metadata_ or {}).get("generated")
+    ]
+    if stale:
+        now = datetime.now(timezone.utc)
+        for c in stale:
+            c.deleted_at = now
+        session.commit()
+        await get_storage().vector.delete_chunks(kb_id, [c.id for c in stale])
 
     chunks = session.execute(
         select(Chunk).where(

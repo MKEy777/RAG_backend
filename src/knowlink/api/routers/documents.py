@@ -262,23 +262,6 @@ def _run_wiki_sync(kb_id: str, knowledge_id: str):
         session.close()
 
 
-def _run_question_gen_sync(kb_id: str, knowledge_id: str, tenant_id: int):
-    import asyncio
-
-    from ...indexing.question_gen import generate_faq_chunks
-    from ...models.database import SessionLocal
-
-    session = SessionLocal()
-    try:
-        doc = session.get(Knowledge, knowledge_id)
-        title = (doc.title or doc.file_name or knowledge_id) if doc else knowledge_id
-        asyncio.run(generate_faq_chunks(session, kb_id, knowledge_id, tenant_id, title))
-    except Exception as e:
-        dbg(f"[FAQ] 问句生成失败: {e}")
-    finally:
-        session.close()
-
-
 class DocResponse(BaseModel):
     id: str
     knowledge_base_id: str
@@ -432,10 +415,6 @@ def _dispatch_processing(kb: KnowledgeBase, doc_id: str, data: bytes, filename: 
                 t = threading.Thread(target=_run_wiki_sync, args=(kb_id, doc_id), daemon=True)
                 t.start()
                 post_threads.append(t)
-            if (kb.question_generation_config or {}).get("enabled", False):
-                t = threading.Thread(target=_run_question_gen_sync, args=(kb_id, doc_id, kb.tenant_id), daemon=True)
-                t.start()
-                post_threads.append(t)
             for t in post_threads:
                 t.join()
 
@@ -522,10 +501,6 @@ def import_local_document(
             post_threads.append(t)
         if wiki_enabled:
             t = threading.Thread(target=_run_wiki_sync, args=(body.kb_id, doc.id), daemon=True)
-            t.start()
-            post_threads.append(t)
-        if (kb.question_generation_config or {}).get("enabled", False):
-            t = threading.Thread(target=_run_question_gen_sync, args=(body.kb_id, doc.id, kb.tenant_id), daemon=True)
             t.start()
             post_threads.append(t)
         for t in post_threads:

@@ -67,7 +67,7 @@ knowlink/
 │   ├── generation/                # context.py(父子展开) citations.py answer.py(SSE)
 │   ├── wiki/                      # queue.py debounce.py ingest.py(Map) merge.py(Reduce) finalize.py retract.py embed_pages.py build.py(同步编排)
 │   ├── graph/                     # builder.py weights.py(PMI) chunk_graph.py mermaid.py snapshot.py
-│   ├── tasks/                     # celery_app.py parse_tasks.py faq_tasks.py wiki_tasks.py graph_tasks.py
+│   ├── tasks/                     # celery_app.py parse_tasks.py（含 wiki/graph 任务）
 │   └── prompts/loader.py          # YAML + {{.Var}} 渲染
 ├── tests/                         # fixtures/ + 各模块单测 + conftest.py(内存SQLite、respx mock LLM、fakeredis)
 └── scripts/                       # run_api.py run_worker.py init_db.py e2e.py
@@ -146,7 +146,7 @@ knowlink/
 - **概览页 slug**：`overview/<doc_id>`（title 为文档标题）。与 detail.md 字面 `overview/<文档标题>` 不同，避免同名文档撞页
 - **Synthesis/Comparison**（设计裁决：detail.md §C 与§流程详解注矛盾，knowlink 无 Agent 工具体系，采 finalize 自动生成）：Synthesis 需 `kb.wiki_config.synthesis_model`（未配置跳过），输入全库已发布页面正文（上限 100 页）；Comparison 用默认模型，选 out_links 共现≥2 的实体/概念对，上限 3 组
 - **Index 导航**：index 页 content 只存 LLM 引言；目录列表由 `GET /wiki/{kb_id}/index` 程序化组装（按类型分组 + folders 树），不靠 LLM
-- **FAQ**：`kb.question_generation_config.enabled` 开启后嵌入完成异步为每个子切块生成 3-5 问句（chunk_type=faq，并发 4）；手动导入 API `POST /faq/{kb_id}/items`（标准问+相似问分别嵌入，反例问仅存储不做抑制）；FAQ 类知识库检索走独立路径按标签优先级排序，不参与融合与 wiki 加权
+- **FAQ**：自动问句生成并入 Wiki 构建流程——每个文档 reduce 完成后为其子切块生成 3-5 问句（chunk_type=faq，并发 4，重建前先软删旧生成问句幂等去重），Wiki 开启即生效，无独立开关；手动导入 API `POST /faq/{kb_id}/items`（标准问+相似问分别嵌入，反例问仅存储不做抑制）；FAQ 类知识库检索走独立路径按标签优先级排序，不参与融合与 wiki 加权
 
 **精简后的表**：`wiki_pending_operations` / `wiki_dead_letters` / `wiki_pages` / `wiki_folders`。已删除未使用的发布层 10 表（wiki_build_requests / wiki_locks / wiki_chunks / wiki_source_refs / wiki_page_revisions / wiki_releases / wiki_release_pages / wiki_active_releases / wiki_page_links / wiki_publish_outbox）——写入即发布，无 release 机制（detail.md §步骤5）。
 
@@ -309,6 +309,7 @@ class GraphStore(Protocol):
 | 2026-07-26 | 图谱对齐 WeKnora + 旧数据修复：① 提示词改从 config/prompts/graph.yaml 加载（移植 WeKnora graph_extraction.yaml 完整版：类型定义/抽取规则/few-shot/strength 分级；title 保持原文语言，不再强制中文）；② 关系 source_chunk_ids 改为两实体 chunk 并集（WeKnora findRelationChunkIDs，原实现误塑整批 chunk），重复关系 strength 加权平均；③ 修复 _delete_document_entities 按 knowledge_id 前缀匹配永不命中的 no-op bug（实体只增不减的根因），改为 GraphManager.reconcile(live_chunk_ids) 原语 + reset，接入启动对账/删除路由/图谱构建前清理；④ 新增 POST /graph/{kb_id}/rebuild 全量重建（后台线程逐文档，graph_status 追踪）与 DELETE /graph/{kb_id} 清空图谱 + 前端重建/刷新/删除按钮 | graph/builder.py、config/prompts/graph.yaml、indexing/reconcile.py、api/routers/{graph,documents}.py、tasks/parse_tasks.py、前端 views/Graph/GraphView.vue、api/graph.ts |
 | 2026-07-26 | Wiki 同名实体重复页修复：并发构建轮次互相看不到未提交页面，同一实体被不同 slug 建两页（如“宋子恺”）。① dedup_candidates 增加确定性短路：候选 name/aliases 与现有页 title/aliases 归一化后完全相同直接映射 slug，不依赖 LLM；LLM 失败时保留已有确定性合并；② finalize 新增 _merge_duplicate_titles 终态收敛：同 kind+同归一化 title 的 entity/concept 页确定性并入最早页（refs/aliases 并集、content 拼接），重复页归档 + 其 wiki_page 嵌入块软删并从向量/关键词索引移除，存量重复下次构建自愈 | wiki/{dedup,finalize}.py |
 | 2026-07-26 | 文档管理增强：① 上传时原文件字节落对象存储 originals/{kb_id}/{doc_id}/{filename}（metadata 记 original_key/original_filename），为重解析与下载提供源；② 新增 POST /documents/{id}/reparse（读存档字节复用解析分发，索引管线自带旧切块清理）、PATCH /documents/{id}（重命名，仅展示字段）、GET /documents/{id}/download；③ needs_images 检测持久化进 metadata + Knowledge.needs_images property（列表接口带出，前端按需显示补图按钮）；④ 任务进度加进程内存回退（get_progress：Redis 优先、内存兜底），同步模式 /status 也能返回 parsing/chunking/embedding/vlm 阶段；⑤ KB 新增 PATCH（name/description/enable_wiki/enable_graph/enable_qa），KBResponse 增 enable_qa | api/routers/documents.py、api/routers/knowledge_bases.py、tasks/parse_tasks.py、models/knowledge.py |
+| 2026-07-26 | FAQ 自动问句生成并入 Wiki 构建：wiki/build.py 每文档 reduce 完成后串行调 generate_faq_chunks（失败不影响 wiki op）；question_gen.py 去掉独立 enabled 检查并新增幂等清理（软删本文档旧 generated 问句 + delete_chunks 清向量）；移除上传/导入路径的 _run_question_gen_sync 独立线程与 KB enable_qa 开关（API/前端同步移除，question_generation_config 列保留未用）；附带修复 Celery 路径此前从不触发问句生成的缺陷 | wiki/build.py、indexing/question_gen.py、api/routers/{documents,knowledge_bases}.py、前端 DetailView.vue、api/knowledgeBase.ts |
 
 ---
 
