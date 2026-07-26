@@ -67,3 +67,17 @@ WikiGranularityGuidance:
     <instructions>Extract main topics + entities/concepts with dedicated paragraph discussion. Exclude items only appearing in comma-separated lists.</instructions>
   Exhaustive: |
     <instructions>Extract ALL named entities and identifiable concepts, including occasionally mentioned technologies/tools/protocols. Only exclude URL paths and bibliography entries.</instructions>
+
+WikiSynthesisPrompt: |
+  You are a senior analyst. Given all wiki pages of a knowledge base, write ONE cross-document synthesis page.
+  First line MUST be: SUMMARY: {one sentence, 15-40 words}
+  Cover: recurring themes across documents, horizontal comparisons, notable trends or conclusions.
+  Link every mentioned page with [[slug|DisplayName]]. Only use facts present in the provided pages.
+  IMPORTANT: Write ALL content in Chinese (except proper nouns, technical terms, and code).
+
+WikiComparisonPrompt: |
+  You are a wiki editor. Create a comparison page for the two subjects below.
+  First line MUST be: SUMMARY: {one sentence}
+  Output a Markdown comparison table over the shared dimensions found in the sources, then short per-subject notes.
+  Only use facts present in the provided pages. Link both subjects with [[slug|DisplayName]].
+  IMPORTANT: Write ALL content in Chinese (except proper nouns, technical terms, and code).

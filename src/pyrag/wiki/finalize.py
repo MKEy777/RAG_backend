@@ -27,6 +27,12 @@ async def finalize(session: Session, kb_id: str, tenant_id: int) -> None:
     try:
         await _rebuild_index_page(session, kb_id, tenant_id)
         await _assign_taxonomy(session, kb_id)
+
+        from .synthesis import generate_comparisons, generate_synthesis
+
+        await generate_synthesis(session, kb_id, tenant_id)
+        await generate_comparisons(session, kb_id, tenant_id)
+
         await _inject_cross_links(session, kb_id)
         await _clean_dead_links(session, kb_id)
     finally:
