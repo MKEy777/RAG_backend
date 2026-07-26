@@ -76,3 +76,16 @@ async def test_reduce_pages_redirects_merged_slug(db_session, fake_llm_factory, 
     assert "entity/acme-corporation" not in slugs
     acme = next(p for p in pages if p.slug == "entity/acme")
     assert "Acme Corporation" in (acme.aliases or [])
+
+
+async def test_overview_slug_uses_doc_id(db_session, fake_llm_factory, fake_storage, monkeypatch):
+    from pyrag.wiki.ingest import MapResult
+    from pyrag.wiki.merge import reduce_pages
+
+    monkeypatch.setattr("pyrag.wiki.merge.get_storage", lambda: fake_storage)
+    mr = MapResult(overview_content="正文", overview_summary="一句话")
+    await reduce_pages(db_session, "kb1", 1, "doc42", "同名文档.pdf", mr)
+
+    page = db_session.query(WikiPage).filter(WikiPage.knowledge_base_id == "kb1").one()
+    assert page.slug == "overview/doc42"
+    assert page.title == "同名文档.pdf"

@@ -28,7 +28,8 @@ async def reduce_pages(
     lock = storage.lock
 
     if map_result.overview_content:
-        slug = f"overview/{doc_title}"
+        # slug 用 doc_id 防同名文档撞页（ARCHITECTURE.md §4.6）
+        slug = f"overview/{document_id}"
         await _write_page(
             session, lock, kb_id, tenant_id, slug,
             kind="overview", title=doc_title,
