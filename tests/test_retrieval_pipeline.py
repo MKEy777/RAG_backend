@@ -71,3 +71,27 @@ async def test_rerank_disabled_truncates(db_session, patched):
     db_session.commit()
     result = await retrieve_candidates(db_session, ["kb1"], "q", top_k=1, enable_rerank=False, enable_graph=False)
     assert len(result.hits) == 1
+
+
+async def test_partial_kb_failure_keeps_other_results(db_session, patched, monkeypatch):
+    from knowlink.retrieval import pipeline as rp
+    from knowlink.retrieval.pipeline import retrieve_candidates
+
+    db_session.add(_kb("kb-ok"))
+    db_session.add(_kb("kb-bad"))
+    db_session.commit()
+
+    async def flaky_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None):
+        if kb_id == "kb-bad":
+            raise RuntimeError("boom")
+        return [_cand(f"{kb_id}-v")], [_cand(f"{kb_id}-k", channel="keyword")]
+
+    async def failing_graph(kb_id, query, existing_ids):
+        raise RuntimeError("graph down")
+
+    monkeypatch.setattr(rp, "hybrid_search", flaky_hybrid)
+    monkeypatch.setattr(rp, "graph_boost", failing_graph)
+
+    result = await retrieve_candidates(db_session, ["kb-ok", "kb-bad"], "q", top_k=10)
+    assert result.hits
+    assert {c.chunk_id for c in result.hits} == {"kb-ok-v", "kb-ok-k"}
