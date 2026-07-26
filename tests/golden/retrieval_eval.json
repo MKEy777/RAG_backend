@@ -1,0 +1,5 @@
+[
+  {"query": "脑电信号情绪识别的主要步骤是什么", "expect_doc_ids": [], "expect_keywords": ["脑电", "情绪"]},
+  {"query": "近红外光谱和脑电结合能判定什么", "expect_doc_ids": [], "expect_keywords": ["近红外", "抑郁"]},
+  {"query": "睡眠舱干预调节方法基于什么反馈", "expect_doc_ids": [], "expect_keywords": ["生物反馈", "睡眠"]}
+]
