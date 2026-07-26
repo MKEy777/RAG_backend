@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from ..llm.client import get_llm_client
 from ..parsing.base import ImageRef
@@ -49,7 +50,7 @@ async def process_image_cascade(
 
 
 async def enrich_markdown_with_images(markdown: str, images: list[ImageRef]) -> str:
-    """Run VLM OCR on images and replace ![img_N](images/{id}.png) placeholders in-place."""
+    """Run VLM OCR on images and replace ![alt](images/{id}.*) placeholders in-place."""
     if not images:
         return markdown
 
@@ -70,16 +71,15 @@ async def enrich_markdown_with_images(markdown: str, images: list[ImageRef]) -> 
 
     results = await asyncio.gather(*[_process(i, img) for i, img in enumerate(images)])
 
-    # 原地替换占位符
+    # 原地替换占位符：alt 文本和扩展名各解析器不同，仅按 ref.id 匹配
     enriched = markdown
     for i, content in results:
         if not content:
             continue
         ref = images[i]
-        placeholder = f"![img_{i + 1}](images/{ref.id}.png)"
-        if placeholder in enriched:
-            enriched = enriched.replace(placeholder, content, 1)
-        else:
+        pattern = re.compile(rf"!\[[^\]]*\]\(images/{re.escape(ref.id)}[^)]*\)")
+        enriched, n = pattern.subn(lambda _m: content, enriched, count=1)
+        if n == 0:
             enriched += "\n\n" + content
 
     logger.info("[VLM] 完成: %d -> %d chars", len(markdown), len(enriched))

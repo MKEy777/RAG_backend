@@ -179,11 +179,19 @@ def parse_zip(data: bytes, filename: str, **kwargs) -> ParseResult:
         else:
             candidate = src
         candidate = str(PurePosixPath(candidate))
+        src_base = PurePosixPath(src).name
         img_data = None
         for n in names:
-            if n.replace("\\", "/") == candidate or n == src:
+            norm = n.replace("\\", "/")
+            if norm == candidate or norm == src:
                 img_data = zf.read(n)
                 break
+        if img_data is None:
+            # 回退：按文件名匹配（zip 内目录结构与 md 引用不一致时）
+            for n in names:
+                if PurePosixPath(n.replace("\\", "/")).name == src_base:
+                    img_data = zf.read(n)
+                    break
         if img_data is None:
             return m.group(0)
         ext = PurePosixPath(src).suffix.lower()
