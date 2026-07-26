@@ -795,6 +795,55 @@ def list_chunks(
     }
 
 
+class ChunkUpdateBody(BaseModel):
+    content: str
+
+
+@router.put("/{doc_id}/chunks/{chunk_id}")
+async def update_chunk(doc_id: str, chunk_id: str, body: ChunkUpdateBody, session: Session = Depends(get_session)):
+    from ...indexing.embedder import build_embed_content, content_hash, embed_texts
+    from ...models.chunk import Chunk
+    from ...storage.factory import get_storage
+
+    chunk = session.get(Chunk, chunk_id)
+    if not chunk or chunk.knowledge_id != doc_id or chunk.deleted_at is not None:
+        raise HTTPException(404, "Chunk not found")
+
+    chunk.content = body.content
+    chunk.content_hash = content_hash(body.content)
+    session.commit()
+
+    if chunk.chunk_type != "parent_text":
+        meta = chunk.metadata_ or {}
+        embed_content = build_embed_content(meta.get("doc_title", ""), meta.get("title_path", []), body.content)
+        storage = get_storage()
+        vectors = await embed_texts([embed_content])
+        idx_meta = [{"knowledge_id": chunk.knowledge_id, "chunk_type": chunk.chunk_type, "doc_title": meta.get("doc_title", "")}]
+        await storage.vector.upsert(chunk.knowledge_base_id, [chunk_id], vectors, idx_meta)
+        await storage.keyword.index_chunks(chunk.knowledge_base_id, [chunk_id], [embed_content], idx_meta)
+    log.info("切块更新", chunk_id=chunk_id, doc_id=doc_id)
+    return {"status": "updated"}
+
+
+@router.delete("/{doc_id}/chunks/{chunk_id}")
+async def delete_chunk(doc_id: str, chunk_id: str, session: Session = Depends(get_session)):
+    from datetime import datetime, timezone
+
+    from ...models.chunk import Chunk
+    from ...storage.factory import get_storage
+
+    chunk = session.get(Chunk, chunk_id)
+    if not chunk or chunk.knowledge_id != doc_id or chunk.deleted_at is not None:
+        raise HTTPException(404, "Chunk not found")
+    chunk.deleted_at = datetime.now(timezone.utc)
+    session.commit()
+    storage = get_storage()
+    await storage.vector.delete_chunks(chunk.knowledge_base_id, [chunk_id])
+    await storage.keyword.delete_chunks(chunk.knowledge_base_id, [chunk_id])
+    log.info("切块删除", chunk_id=chunk_id, doc_id=doc_id)
+    return {"status": "deleted"}
+
+
 @router.get("/{doc_id}/content")
 def get_document_content(doc_id: str, session: Session = Depends(get_session)):
     from ...models.chunk import Chunk
