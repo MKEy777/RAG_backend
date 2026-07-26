@@ -29,10 +29,12 @@ async def rerank_stage(
         return candidates[:top_k]
 
     scored: list[tuple[Candidate, float]] = []
+    max_base = max((c.score for c in candidates), default=1.0) or 1.0
     for item in results:
         idx = item["index"]
-        score = item["score"]
         if idx < len(candidates):
+            base_norm = candidates[idx].score / max_base
+            score = round(0.8 * item["score"] + 0.2 * base_norm, 6)
             scored.append((candidates[idx], score))
 
     filtered = [(c, s) for c, s in scored if s >= threshold]
