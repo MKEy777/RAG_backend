@@ -204,3 +204,99 @@ def wiki_status(kb_id: str, session: Session = Depends(get_session)):
         .count()
     )
     return {"page_count": page_count, "pending_count": pending_count}
+
+
+class PageUpdateBody(BaseModel):
+    title: str | None = None
+    content: str | None = None
+    folder_id: str | None = None
+
+
+@router.put("/{kb_id}/pages/{page_id}")
+async def update_wiki_page(kb_id: str, page_id: str, body: PageUpdateBody, session: Session = Depends(get_session)):
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
+    from ...indexing.embedder import content_hash as _hash, embed_texts
+    from ...models.chunk import Chunk
+    from ...storage.factory import get_storage
+
+    page = (
+        session.query(WikiPage)
+        .filter(WikiPage.page_id == page_id, WikiPage.knowledge_base_id == kb_id, WikiPage.deleted_at.is_(None))
+        .first()
+    )
+    if not page:
+        raise HTTPException(404, "Page not found")
+
+    content_changed = body.content is not None and body.content != page.content
+    if body.title is not None:
+        page.title = body.title
+    if body.content is not None:
+        page.content = body.content
+    if body.folder_id is not None:
+        page.folder_id = body.folder_id or None
+    if content_changed:
+        page.version += 1
+    session.commit()
+
+    if content_changed and page.content:
+        storage = get_storage()
+        old = (
+            session.query(Chunk)
+            .filter(Chunk.knowledge_base_id == kb_id, Chunk.chunk_type == "wiki_page",
+                    Chunk.knowledge_id == page.page_id, Chunk.deleted_at.is_(None))
+            .all()
+        )
+        now = datetime.now(timezone.utc)
+        old_ids = [c.id for c in old]
+        for c in old:
+            c.deleted_at = now
+        new_id = _uuid.uuid4().hex
+        session.add(Chunk(
+            id=new_id, tenant_id=page.tenant_id, knowledge_base_id=kb_id,
+            knowledge_id=page.page_id, content=page.content, chunk_type="wiki_page",
+            content_hash=_hash(page.content),
+            metadata_={"title_path": [page.title], "doc_title": page.title, "slug": page.slug},
+        ))
+        session.commit()
+        text = f"{page.title}\n{page.content}"
+        vectors = await embed_texts([text])
+        meta = [{"knowledge_id": kb_id, "chunk_type": "wiki_page"}]
+        await storage.vector.upsert(kb_id, [new_id], vectors, meta)
+        await storage.keyword.index_chunks(kb_id, [new_id], [text], meta)
+        if old_ids:
+            await storage.vector.delete_chunks(kb_id, old_ids)
+            await storage.keyword.delete_chunks(kb_id, old_ids)
+    return {"status": "updated", "version": page.version}
+
+
+class FolderBody(BaseModel):
+    name: str
+    parent_id: str | None = None
+
+
+@router.get("/{kb_id}/folders")
+def list_folders(kb_id: str, session: Session = Depends(get_session)):
+    rows = session.query(WikiFolder).filter(WikiFolder.knowledge_base_id == kb_id).all()
+    return {"folders": [{"id": f.id, "name": f.name, "parent_id": f.parent_id} for f in rows]}
+
+
+@router.post("/{kb_id}/folders")
+def create_folder(kb_id: str, body: FolderBody, session: Session = Depends(get_session)):
+    row = WikiFolder(knowledge_base_id=kb_id, name=body.name, parent_id=body.parent_id)
+    session.add(row)
+    session.commit()
+    return {"id": row.id, "name": row.name, "parent_id": row.parent_id}
+
+
+@router.delete("/{kb_id}/folders/{folder_id}")
+def delete_folder(kb_id: str, folder_id: str, session: Session = Depends(get_session)):
+    row = session.get(WikiFolder, folder_id)
+    if not row or row.knowledge_base_id != kb_id:
+        raise HTTPException(404, "Folder not found")
+    session.query(WikiPage).filter(WikiPage.folder_id == folder_id).update({"folder_id": None})
+    session.query(WikiFolder).filter(WikiFolder.parent_id == folder_id).update({"parent_id": row.parent_id})
+    session.delete(row)
+    session.commit()
+    return {"status": "deleted"}
