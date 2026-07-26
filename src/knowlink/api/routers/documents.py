@@ -529,6 +529,37 @@ def import_local_document(
     return doc
 
 
+class ChunkPreviewBody(BaseModel):
+    text: str
+    strategy: str = "auto"
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
+    enable_parent_child: bool = True
+
+
+@router.post("/chunk-preview")
+def chunk_preview(body: ChunkPreviewBody):
+    from ...chunking import chunk_document
+    from ...chunking.parent_child import ParentChildPair
+
+    result = chunk_document(
+        body.text, strategy=body.strategy, chunk_size=body.chunk_size,
+        overlap=body.chunk_overlap, enable_parent_child=body.enable_parent_child,
+    )
+    if result and isinstance(result[0], ParentChildPair):
+        return {"mode": "parent_child", "parents": [
+            {
+                "text": p.parent_text[:2000],
+                "title_path": p.parent_title_path,
+                "children": [{"text": c.text, "start": c.start, "end": c.end} for c in p.children],
+            }
+            for p in result
+        ]}
+    return {"mode": "flat", "chunks": [
+        {"text": c.text, "start": c.start, "end": c.end, "title_path": c.title_path} for c in result
+    ]}
+
+
 class ImportUrlBody(BaseModel):
     kb_id: str
     url: str
