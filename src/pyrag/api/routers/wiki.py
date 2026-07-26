@@ -9,10 +9,65 @@ from sqlalchemy.orm import Session
 
 from ...logging import get_logger
 from ...models.database import get_session
-from ...models.wiki import WikiPage, WikiPendingOperation
+from ...models.wiki import WikiFolder, WikiPage, WikiPendingOperation
 
 log = get_logger("wiki")
 router = APIRouter()
+
+GROUP_ORDER = ["overview", "concept", "entity", "synthesis", "comparison"]  # detail.md §C4
+
+
+def build_index_payload(session: Session, kb_id: str) -> dict:
+    pages = (
+        session.query(WikiPage)
+        .filter(
+            WikiPage.knowledge_base_id == kb_id,
+            WikiPage.deleted_at.is_(None),
+            WikiPage.status == "published",
+        )
+        .order_by(WikiPage.title)
+        .all()
+    )
+    if not pages:
+        return {"intro": "", "groups": [], "folders": []}
+
+    intro = ""
+    by_kind: dict[str, list[WikiPage]] = {}
+    for p in pages:
+        if p.kind == "index":
+            intro = p.content or ""
+            continue
+        by_kind.setdefault(p.kind, []).append(p)
+
+    groups = []
+    for kind in GROUP_ORDER:
+        items = by_kind.get(kind)
+        if not items:
+            continue
+        groups.append({
+            "type": kind,
+            "total": len(items),
+            "items": [
+                {"slug": p.slug, "title": p.title, "summary": p.summary or "", "folder_id": p.folder_id}
+                for p in items
+            ],
+        })
+
+    folder_rows = session.query(WikiFolder).filter(WikiFolder.knowledge_base_id == kb_id).all()
+    page_counts: dict[str, int] = {}
+    for p in pages:
+        if p.folder_id:
+            page_counts[p.folder_id] = page_counts.get(p.folder_id, 0) + 1
+    folders = [
+        {"id": f.id, "name": f.name, "parent_id": f.parent_id, "page_count": page_counts.get(f.id, 0)}
+        for f in folder_rows
+    ]
+    return {"intro": intro, "groups": groups, "folders": folders}
+
+
+@router.get("/{kb_id}/index")
+def wiki_index(kb_id: str, session: Session = Depends(get_session)):
+    return build_index_payload(session, kb_id)
 
 
 class WikiPageSummary(BaseModel):
