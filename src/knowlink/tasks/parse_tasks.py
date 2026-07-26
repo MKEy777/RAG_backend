@@ -99,7 +99,7 @@ def parse_and_index_task(self, knowledge_id: str, kb_id: str, tenant_id: int, fi
         )
         session.commit()
         log.error("解析任务异常_即将重试", knowledge_id=knowledge_id, error=str(e), retries_left=self.max_retries - self.request.retries)
-        raise self.retry(exc=e, countdown=5)
+        raise self.retry(exc=e, countdown=5 * (2 ** self.request.retries))
     finally:
         session.close()
 

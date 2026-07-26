@@ -20,7 +20,11 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-    task_soft_time_limit=300,
-    task_time_limit=600,
+    task_soft_time_limit=1500,
+    task_time_limit=1800,
     worker_max_tasks_per_child=100,
+    task_default_queue="enrich",
+    task_routes={
+        "knowlink.tasks.parse_tasks.parse_and_index_task": {"queue": "ingest"},
+    },
 )

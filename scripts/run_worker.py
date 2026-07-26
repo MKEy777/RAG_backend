@@ -4,7 +4,7 @@ from knowlink.tasks.celery_app import celery_app
 
 
 def main():
-    celery_app.worker_main(["worker", "--pool=solo", "--loglevel=info"])
+    celery_app.worker_main(["worker", "--pool=solo", "--loglevel=info", "-Q", "ingest,enrich"])
 
 
 if __name__ == "__main__":
