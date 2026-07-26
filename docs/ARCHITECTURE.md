@@ -107,6 +107,7 @@ pyrag/
 - **分数归一化**：仅向量分钳位 [0,1]，BM25 不缩放（RRF 排名免疫）
 - **重排序**：rerank TopK=10，threshold=0.2；阈值降级（无结果时降到 0.7×原阈值，下限 0.3）
 - **Wiki 加权**：rerank 后对所有 `wiki_page` 切块 ×1.3
+- **API 参数覆写**：`/api/v1/retrieval` 支持按请求覆写检索参数（recall_top_k / vector_threshold / keyword_threshold / rrf_k / vector_weight / keyword_weight / enable_rerank / rerank_threshold / wiki_boost / expand_parent），缺省回落 settings 默认值（detail.md §混合检索）；enable_rerank=false 时跳过精排直接取融合序，expand_parent=false 时跳过父块扩展
 - **FAQ**：独立索引，迭代检索 ≤5 轮，起始 TopK=matchCount×3，按标签优先级排序
 - **图谱增强**：查询实体抽取 → 图谱找相关 chunk → 并入候选去重（一跳 + 两跳，衰减 0.5）
 - **返回结构**：`Candidate` 必须保留 chunk_id / score / 来源通道 / chunk_type / 标题路径 / document_id，不能过早降级为纯文本
@@ -300,6 +301,11 @@ class GraphStore(Protocol):
 | 2026-07-26 | 父子切块语义修正：父块 = 标题层级完整 section（split_by_heading 新增 whole_sections 模式，取消 4096 截断与贪心细分），无标题文档退化为 parent_size 粒度递归切分；_greedy_split 代码围栏原子化（mermaid 等不再被空行拆碎） | chunking/{heading,parent_child,__init__}.py |
 | 2026-07-26 | 孤立标题块修复：split_by_heading 新增 _merge_heading_only 后置合并（参考 WeKnora chunker coalesceTinyChunks：仅原文连续时合并，以原文切片保持 span 不变量），仅含标题行的块并入下一块（文末则向前并），覆盖 _greedy_split 三条泄漏路径（围栏前 flush、大段落硬切前 flush、溢出 flush）及空 section 父块 | chunking/heading.py |
 | 2026-07-26 | 删除文档仍被检索召回修复：DELETE /documents/{id} 联动软删 chunks + 清理向量/关键词/图谱索引（GraphManager 新增 delete_document）；DELETE /kb/{id} 联动软删 chunks；expand_parent_chunks 增加 Knowledge.deleted_at 兜底过滤历史残留；LocalVectorStore meta 落盘（meta.json）、BM25KeywordIndex corpus/meta 落盘（corpus.json + indexed_ids.json 一致性校验），修复重启后按文档删除失效与 BM25 检索全空 | api/routers/{documents,knowledge_bases}.py、storage/{vector_local,keyword_bm25s}.py、graph/builder.py、generation/context.py |
+| 2026-07-26 | 检索 API 增加按请求参数覆写（召回/融合/精排/加权/父块扩展 10 项，Pydantic Field 约束边界） | api/routers/retrieval.py、前端检索测试页 |
+| 2026-07-26 | 索引对账：新增 indexing/reconcile.py（以 DB 为真值清理死块向量/语料、回填历史缺失 meta、重建旧版未落盘的 BM25 语料），lite 存储新增 reconcile 方法（非 Protocol 接口，full 不需要），startup 后台自动执行。根因：历史删除残留向量占据 top-k 名额（某 KB 1860 条中 1850 条死数据）被兜底过滤后召回数骤降 | indexing/reconcile.py、storage/{vector_local,keyword_bm25s}.py、api/app.py |
+| 2026-07-26 | Rate limit 豁免 /status 轮询：前端每 3s 轮询每个 processing 文档的状态，多文档并行上传时超过 60 次/分窗口导致正常请求（如 chat）被 429；/status 后缀路径不再计入限流窗口（与 TraceMiddleware 日志跳过规则对齐） | api/middleware.py |
+| 2026-07-26 | 文档状态改 SSE 推送：新增 GET /documents/status/stream?kb_id=（sse-starlette，服务端每 1s 查 DB、状态变化才推 status 事件、无 processing 后发 done 关流）；前端列表轮询 useDocStatusPolling 换为单连接 useDocStatusStream（EventSource），N 文档×20次/分的轮询降为 1 条长连接；状态详情弹窗的单文档轮询保留（需 Redis percent 进度） | api/routers/documents.py、前端 composables/useDocStatusPolling.ts、views/KnowledgeBase/DetailView.vue |
+| 2026-07-26 | 图谱对齐 WeKnora + 旧数据修复：① 提示词改从 config/prompts/graph.yaml 加载（移植 WeKnora graph_extraction.yaml 完整版：类型定义/抽取规则/few-shot/strength 分级；title 保持原文语言，不再强制中文）；② 关系 source_chunk_ids 改为两实体 chunk 并集（WeKnora findRelationChunkIDs，原实现误塑整批 chunk），重复关系 strength 加权平均；③ 修复 _delete_document_entities 按 knowledge_id 前缀匹配永不命中的 no-op bug（实体只增不减的根因），改为 GraphManager.reconcile(live_chunk_ids) 原语 + reset，接入启动对账/删除路由/图谱构建前清理；④ 新增 POST /graph/{kb_id}/rebuild 全量重建（后台线程逐文档，graph_status 追踪）与 DELETE /graph/{kb_id} 清空图谱 + 前端重建/刷新/删除按钮 | graph/builder.py、config/prompts/graph.yaml、indexing/reconcile.py、api/routers/{graph,documents}.py、tasks/parse_tasks.py、前端 views/Graph/GraphView.vue、api/graph.ts |
 
 ---
 
