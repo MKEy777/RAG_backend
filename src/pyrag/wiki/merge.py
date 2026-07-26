@@ -12,6 +12,7 @@ from ..models.wiki import WikiPage, WikiPageRevision
 from ..prompts.loader import get_prompt
 from ..settings import settings
 from ..storage.factory import get_storage
+from .dedup import dedup_candidates
 from .ingest import MapResult
 
 
@@ -37,6 +38,8 @@ async def reduce_pages(
             chunk_refs=[],
         )
 
+    merges = await dedup_candidates(session, kb_id, map_result.candidates)
+
     for candidate in map_result.candidates:
         slug = candidate.get("slug", "")
         name = candidate.get("name", "")
@@ -46,14 +49,20 @@ async def reduce_pages(
         details = candidate.get("details", candidate.get("description", ""))
         chunk_ids = map_result.citations.get(slug, [])
 
+        target_slug = merges.get(slug, slug)
+        aliases = list(candidate.get("aliases") or [])
+        if target_slug != slug:
+            # 别名重定向：新名字并入已有页面的别名集
+            aliases = list({*aliases, name})
+
         await _write_page(
-            session, lock, kb_id, tenant_id, slug,
+            session, lock, kb_id, tenant_id, target_slug,
             kind=kind, title=name,
             content=details,
             summary=candidate.get("description", ""),
             source_doc=document_id, doc_title=doc_title,
             chunk_refs=chunk_ids,
-            aliases=candidate.get("aliases", []),
+            aliases=aliases,
         )
 
 
