@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from .table_header import annotate_table_headers
+
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 _HEADING_ONLY_RE = re.compile(r"(?:#{1,6}\s+\S[^\n]*\n*)+")
 
@@ -63,7 +65,11 @@ def split_by_heading(
         else:
             sub_chunks = _greedy_split(sec.text, chunk_size)
             for j, sub in enumerate(sub_chunks):
-                offset = sec.start + sec.text.find(sub)
+                pos = sec.text.find(sub)
+                if pos < 0:
+                    body = sub.split("\n", 2)[-1]
+                    pos = sec.text.find(body)
+                offset = sec.start + max(pos, 0)
                 result.append(ChunkSpan(
                     text=sub,
                     title_path=sec.title_path,
@@ -177,6 +183,7 @@ def _greedy_split(text: str, chunk_size: int) -> list[str]:
             merged[-1] = merged[-1] + "\n" + c
         else:
             merged.append(c)
+    merged = annotate_table_headers(merged)
     return merged if merged else [text]
 
 
