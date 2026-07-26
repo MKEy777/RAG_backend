@@ -41,11 +41,14 @@ async def generate_answer_stream(
     })
 
     client = get_llm_client()
+    emitted = False
     try:
         async for token in client.chat_stream(messages):
+            emitted = True
             yield _sse_event("message", {"content": token})
-    except Exception:
-        yield _sse_event("message", {"content": NO_ANSWER_MSG})
+    except Exception as e:
+        # 保留已输出内容，错误走独立事件，前端按事件类型展示
+        yield _sse_event("error", {"message": "生成中断，请重试", "detail": repr(e)[:200], "partial": emitted})
 
     yield _sse_event("references", {"references": references})
     yield _sse_event("done", {})
