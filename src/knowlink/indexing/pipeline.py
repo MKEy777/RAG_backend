@@ -38,16 +38,12 @@ async def run_indexing_pipeline(
              chunk_size=chunk_size, overlap=overlap)
 
     storage = get_storage()
-    log.info("清理旧索引", knowledge_id=knowledge_id)
-    await storage.vector.delete_document(kb_id, knowledge_id)
-    await storage.keyword.delete_document(kb_id, knowledge_id)
-
-    now = datetime.now(timezone.utc)
-    session.execute(
-        update(Chunk)
-        .where(Chunk.knowledge_id == knowledge_id, Chunk.deleted_at.is_(None))
-        .values(deleted_at=now)
-    )
+    old_chunk_ids = [
+        r[0]
+        for r in session.query(Chunk.id)
+        .filter(Chunk.knowledge_id == knowledge_id, Chunk.deleted_at.is_(None))
+        .all()
+    ]
 
     result = chunk_document(
         markdown,
@@ -59,15 +55,22 @@ async def run_indexing_pipeline(
     chunk_count = len(result) if result else 0
     log.info("分块完成", chunk_count=chunk_count, pc_mode=enable_pc)
 
+    new_ids: list[str] = []
     try:
         if enable_pc and result and isinstance(result[0], ParentChildPair):
             child_total = sum(len(p.children) for p in result)
             log.info("使用父子块模式", parent_count=len(result), child_count=child_total)
-            await _index_parent_child(session, result, knowledge_id, kb_id, tenant_id, doc_title, storage)
+            new_ids = await _index_parent_child(session, result, knowledge_id, kb_id, tenant_id, doc_title, storage)
         else:
             log.info("使用平铺块模式", count=chunk_count)
-            await _index_flat(session, result, knowledge_id, kb_id, tenant_id, doc_title, storage)
+            new_ids = await _index_flat(session, result, knowledge_id, kb_id, tenant_id, doc_title, storage)
 
+        if old_chunk_ids:
+            session.execute(
+                update(Chunk)
+                .where(Chunk.id.in_(old_chunk_ids))
+                .values(deleted_at=datetime.now(timezone.utc))
+            )
         if mark_completed:
             session.execute(
                 update(Knowledge)
@@ -75,23 +78,28 @@ async def run_indexing_pipeline(
                 .values(parse_status="completed", processed_at=datetime.now(timezone.utc))
             )
         session.commit()
+        if old_chunk_ids:
+            await storage.vector.delete_chunks(kb_id, old_chunk_ids)
+            await storage.keyword.delete_chunks(kb_id, old_chunk_ids)
         log.info("索引管线完成", knowledge_id=knowledge_id, kb_id=kb_id)
     except Exception as e:
         session.rollback()
-        log.error("索引管线失败_开始回滚", knowledge_id=knowledge_id, kb_id=kb_id, error=str(e))
+        log.error("索引管线失败_回滚", knowledge_id=knowledge_id, kb_id=kb_id, error=str(e))
+        if new_ids:
+            await storage.vector.delete_chunks(kb_id, new_ids)
+            await storage.keyword.delete_chunks(kb_id, new_ids)
         session.execute(
             update(Knowledge)
             .where(Knowledge.id == knowledge_id)
             .values(parse_status="failed", error_message=str(e)[:2000])
         )
         session.commit()
-        log.info("索引管线失败_回滚完成", knowledge_id=knowledge_id)
         raise
 
 
 async def _index_parent_child(
     session, pairs: list[ParentChildPair], knowledge_id, kb_id, tenant_id, doc_title, storage
-) -> None:
+) -> list[str]:
     child_texts: list[str] = []
     child_ids: list[str] = []
     pre_id: str | None = None
@@ -150,11 +158,12 @@ async def _index_parent_child(
         ]
         await storage.vector.upsert(kb_id, child_ids, vectors, metadata_list)
         await storage.keyword.index_chunks(kb_id, child_ids, child_texts, metadata_list)
+    return child_ids
 
 
 async def _index_flat(
     session, spans, knowledge_id, kb_id, tenant_id, doc_title, storage
-) -> None:
+) -> list[str]:
     texts: list[str] = []
     ids: list[str] = []
     pre_id: str | None = None
@@ -196,3 +205,4 @@ async def _index_flat(
         ]
         await storage.vector.upsert(kb_id, ids, vectors, metadata_list)
         await storage.keyword.index_chunks(kb_id, ids, texts, metadata_list)
+    return ids
