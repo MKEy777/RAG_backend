@@ -527,14 +527,54 @@ def get_document_status(doc_id: str, session: Session = Depends(get_session)):
 
 
 @router.delete("/{doc_id}")
-def delete_document(doc_id: str, session: Session = Depends(get_session)):
+async def delete_document(doc_id: str, session: Session = Depends(get_session)):
     from datetime import timezone
+
+    from sqlalchemy import update
+
+    from ...graph.builder import get_graph_manager
+    from ...models.chunk import Chunk
+    from ...storage.factory import get_storage
 
     doc = session.get(Knowledge, doc_id)
     if not doc:
         raise HTTPException(404, "Document not found")
-    doc.deleted_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    doc.deleted_at = now
+    session.execute(
+        update(Chunk)
+        .where(Chunk.knowledge_id == doc_id, Chunk.deleted_at.is_(None))
+        .values(deleted_at=now)
+    )
     session.commit()
+
+    kb_id = doc.knowledge_base_id
+    storage = get_storage()
+    await storage.vector.delete_document(kb_id, doc_id)
+    await storage.keyword.delete_document(kb_id, doc_id)
+    await get_graph_manager().delete_document(kb_id, doc_id)
+    log.info("文档删除_索引已清理", kb_id=kb_id, doc_id=doc_id)
+
+    kb = session.get(KnowledgeBase, kb_id)
+    if kb and (kb.wiki_config or {}).get("enabled", True):
+        import threading
+
+        def _wiki_retract():
+            from ...models.database import SessionLocal
+            from ...wiki.build import run_wiki_build
+            from ...wiki.queue import enqueue_ingest
+
+            s = SessionLocal()
+            try:
+                enqueue_ingest(s, kb_id, doc_id, op="retract")
+                run_wiki_build(s, kb_id)
+            except Exception as e:
+                log.error("Wiki撤回构建失败", kb_id=kb_id, doc_id=doc_id, error=str(e)[:200])
+            finally:
+                s.close()
+
+        threading.Thread(target=_wiki_retract, daemon=True).start()
+
     return {"status": "deleted"}
 
 

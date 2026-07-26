@@ -6,8 +6,13 @@ from sqlalchemy.orm import Session
 
 from ..llm.client import get_llm_client
 from ..llm.retry import wiki_llm_retry
+from ..models.chunk import Chunk
 from ..models.wiki import WikiPage
 from ..prompts.loader import get_prompt
+
+
+def _doc_ref_match(ref: str, document_id: str) -> bool:
+    return ref.split("|", 1)[0] == document_id
 
 
 async def retract_document(
@@ -15,26 +20,30 @@ async def retract_document(
 ) -> None:
     pages = (
         session.query(WikiPage)
-        .filter(
-            WikiPage.knowledge_base_id == kb_id,
-            WikiPage.deleted_at.is_(None),
-        )
+        .filter(WikiPage.knowledge_base_id == kb_id, WikiPage.deleted_at.is_(None))
         .all()
     )
-
-    source_ref_key = f"{document_id}|{doc_title}"
     affected = [
         p for p in pages
-        if any(document_id in ref for ref in (p.source_refs or []))
+        if any(_doc_ref_match(ref, document_id) for ref in (p.source_refs or []))
     ]
+    await retract_pages(session, kb_id, document_id, doc_title, affected)
 
-    if not affected:
+
+async def retract_pages(
+    session: Session, kb_id: str, document_id: str, doc_title: str,
+    pages: list[WikiPage],
+) -> None:
+    if not pages:
         return
+    doc_chunk_ids = {
+        cid for (cid,) in session.query(Chunk.id).filter(Chunk.knowledge_id == document_id).all()
+    }
 
-    for page in affected:
+    for page in pages:
         remaining_refs = [
             ref for ref in (page.source_refs or [])
-            if document_id not in ref
+            if not _doc_ref_match(ref, document_id)
         ]
 
         if not remaining_refs:
@@ -43,34 +52,18 @@ async def retract_document(
             session.commit()
             continue
 
-        new_content = await _rewrite_without_source(page.content or "", doc_title)
-
-        page.content = new_content
+        page.content = await _rewrite_without_source(page.content or "", doc_title)
         page.source_refs = remaining_refs
-        page.chunk_refs = [
-            cid for cid in (page.chunk_refs or [])
-            if not cid.startswith(document_id)
-        ]
+        page.chunk_refs = [cid for cid in (page.chunk_refs or []) if cid not in doc_chunk_ids]
         page.version = (page.version or 0) + 1
         session.commit()
-
-    from .finalize import finalize
-
-    kb_page = (
-        session.query(WikiPage)
-        .filter(WikiPage.knowledge_base_id == kb_id)
-        .first()
-    )
-    tenant_id = kb_page.tenant_id if kb_page else 1
-    await finalize(session, kb_id, tenant_id)
 
 
 async def _rewrite_without_source(content: str, deleted_title: str) -> str:
     client = get_llm_client()
     user_msg = (
         f"<deleted_documents>\n{deleted_title}\n</deleted_documents>\n"
-        f"<existing_page_content>\n{content}\n</existing_page_content>\n"
-        f"<remaining_source_documents>\n(see page context)\n</remaining_source_documents>"
+        f"<existing_page_content>\n{content}\n</existing_page_content>"
     )
     try:
         @wiki_llm_retry()

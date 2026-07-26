@@ -91,9 +91,28 @@ async def _wiki_build_async(
     kb = session.get(KnowledgeBase, kb_id)
     granularity = ((kb.wiki_config or {}).get("extraction_granularity") or "Standard") if kb else "Standard"
 
+    # retract op 先于 ingest 处理（detail.md §步骤7）
+    from .retract import retract_document
+
+    processed_retracts = 0
+    ingest_ops = []
+    for op in ops:
+        if op.operation == "retract":
+            doc = session.get(Knowledge, op.document_id)
+            title = (doc.title or doc.file_name) if doc else op.document_id
+            try:
+                await retract_document(session, kb_id, op.document_id, title)
+                mark_completed(session, op)
+                processed_retracts += 1
+            except Exception as e:
+                log.error("Wiki撤回失败", kb_id=kb_id, document_id=op.document_id, error=str(e)[:200])
+                mark_failed(session, op, str(e))
+        else:
+            ingest_ops.append(op)
+
     # 预加载切块（串行 DB 读，毫秒级）
     doc_data: list[tuple] = []
-    for op in ops:
+    for op in ingest_ops:
         doc = session.get(Knowledge, op.document_id)
         doc_title = (doc.title or doc.file_name or op.document_id) if doc else op.document_id
         chunks = session.execute(
@@ -143,4 +162,4 @@ async def _wiki_build_async(
             log.error("Wiki构建_文档处理失败", kb_id=kb_id, document_id=op.document_id, error=str(e)[:200])
             mark_failed(session, op, str(e))
 
-    return processed
+    return processed + processed_retracts
