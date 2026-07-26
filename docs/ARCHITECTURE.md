@@ -138,17 +138,25 @@ pyrag/
 | 去重 Jaccard / TopK / 旁路        | 0.08 / 5 / 25                   | detail.md Wiki §步骤4    |
 
 - **Map**（单文档抽取）：拼原文(≤32768) → Pass0 候选 slug → 引用分类（按批 12000 字符，并发 4）→ 摘要 + 引用映射并行
-- **Reduce**（跨文档归并）：per-slug SETNX 锁 → 去重（Jaccard 预过滤 → LLM WikiDeduplicationPrompt）→ WikiPageModifyPrompt 合并 → 写 `wiki_pages` + `wiki_page_revisions` + `wiki_chunks` + `wiki_source_refs`
-- **Finalize**（全局终态）：首页引言（首建/增量） → 分类分配 → 交叉链接注入 → 死链清理 → 直通 release
-- **撤回**：SourceRefs 定位受影响页面 → LLM 重写（`WikiPageModifyPrompt` 撤回模式）→ 空页软删 → 触发 finalize
+- **Reduce**（跨文档归并）：per-slug SETNX 锁 → 去重（表面相似度预筛：字符 bigram Jaccard，topK=5、floor=0.08、语料≤25 页直通 → LLM WikiDeduplicationPrompt，合并项重定向到已有 slug 并追加别名）→ WikiPageModifyPrompt 合并 → 直接写 `wiki_pages`（无 revision/release，写入即发布）
+- **Finalize**（全局终态）：首页引言（首建/增量）→ 分类分配 → Synthesis/Comparison 生成 → 交叉链接注入 → 死链清理
+- **撤回**：DELETE /documents/{id} 软删文档与切块、清理向量/关键词索引，入队 retract op（同队列 op='retract'）→ SourceRefs 定位受影响页面 → LLM 重写剩余内容 → 唯一来源页软删归档 → 触发 finalize
+- **重解析 replace**：解析完成显式入队本文档；reduce 前比对旧 source_refs 页面集，不再出现的 slug 撤回，重叠 slug 的合并提示词携带 `<replaced_document>` 指令替换旧贡献
+- **概览页 slug**：`overview/<doc_id>`（title 为文档标题）。与 detail.md 字面 `overview/<文档标题>` 不同，避免同名文档撞页
+- **Synthesis/Comparison**（设计裁决：detail.md §C 与§流程详解注矛盾，pyrag 无 Agent 工具体系，采 finalize 自动生成）：Synthesis 需 `kb.wiki_config.synthesis_model`（未配置跳过），输入全库已发布页面正文（上限 100 页）；Comparison 用默认模型，选 out_links 共现≥2 的实体/概念对，上限 3 组
+- **Index 导航**：index 页 content 只存 LLM 引言；目录列表由 `GET /wiki/{kb_id}/index` 程序化组装（按类型分组 + folders 树），不靠 LLM
+- **FAQ**：`kb.question_generation_config.enabled` 开启后嵌入完成异步为每个子切块生成 3-5 问句（chunk_type=faq，并发 4）；手动导入 API `POST /faq/{kb_id}/items`（标准问+相似问分别嵌入，反例问仅存储不做抑制）；FAQ 类知识库检索走独立路径按标签优先级排序，不参与融合与 wiki 加权
+
+**精简后的表**：`wiki_pending_operations` / `wiki_dead_letters` / `wiki_pages` / `wiki_folders`。已删除未使用的发布层 10 表（wiki_build_requests / wiki_locks / wiki_chunks / wiki_source_refs / wiki_page_revisions / wiki_releases / wiki_release_pages / wiki_active_releases / wiki_page_links / wiki_publish_outbox）——写入即发布，无 release 机制（detail.md §步骤5）。
 
 **七类页面**：overview（文档级） / concept / entity（概念与实体） / index（知识库级） / synthesis（综览） / comparison（对照） / faq（独立路径）
 
-**提示词全套**：`config/prompts/wiki.yaml` 移植自 `../WeKnora/internal/agent/prompts_wiki.go`，包含：
+**提示词全套**：`config/prompts/wiki.yaml` 移植自 `../WeKnora/internal/agent/prompts_wiki.go`，经 `prompts/loader.get_prompt` 注入，代码内不硬编码，包含：
 
 - WikiSummaryPrompt / WikiCandidateSlugPrompt / WikiChunkCitationPrompt
 - WikiPageModifyPrompt / WikiDeduplicationPrompt
 - WikiIndexIntroPrompt / WikiIndexIntroUpdatePrompt / WikiTaxonomyPlanPrompt
+- WikiSynthesisPrompt / WikiComparisonPrompt
 - WikiGranularityGuidance 三档
 
 ### 4.7 知识图谱（graph/）
@@ -285,10 +293,13 @@ class GraphStore(Protocol):
 | ---------- | ---------------------------------------------------------------------------------------- | --------------------------- |
 | 2026-07-25 | 初版（按 detail.md + WeKnora 参考实现设计）                                              | M1–M6 全部未开始            |
 | 2026-07-25 | §4.7 图谱分层：轻量版 PMI 内存图（本地开发）+ 完整版 Neo4j（生产）；新增 GraphStore 接口 | M5 图谱阶段实现需按分层设计 |
+| 2026-07-26 | Wiki 管线补全：去重接线（预筛 topK=5/floor=0.08/≤25 页直通）、retract 全链路、重解析 replace、Index 导航 API、Synthesis/Comparison 终态生成（共现≥2、上限 3 组）、FAQ 全路径、提示词 YAML 化、删除未用发布层 10 表；overview slug 改 doc_id | wiki/*、api/routers/{documents,wiki,faq,retrieval}.py、models/wiki.py、migrations |
 | 2026-07-26 | 前端三大功能补全：新增 chunks/wiki/graph API 端点、wiki_build_task 接线、图谱 API 读快照；前端 3 视图 3 路由 | B1-B5 F1-F4 |
 | 2026-07-26 | Wiki 编排修复：新增 `wiki/build.py::run_wiki_build` 统一三处编排（Celery 任务/手动 API/同步上传路径）；修复防抖时序（构建即触发者，入队后 available_at 前移）、doc_title 误传 UUID、未处理检测改为 completed_at 过滤、wiki API 响应模型 updated_at 改 datetime | wiki/、tasks/、api/routers/{wiki,documents}.py |
 | 2026-07-26 | 数据一致性修复：文件型 SQLite 弃用 StaticPool 改默认连接池（单连接跨线程共享会被 API 请求的 ROLLBACK 吞掉后台线程未提交写入，导致切块/图谱/Wiki 全空），新增 busy_timeout=30s；RedisLock 连接失败降级 LocalLock；新增 GET /documents/{id}/content 按切块偏移重建解析后文本；前端侧边栏新增 Wiki/知识图谱入口（顶级路由 + 知识库选择器），切片页改左右分栏源文高亮对照 | models/database.py、storage/lock_redis.py、api/routers/documents.py、前端 router/layouts/views |
 | 2026-07-26 | 父子切块语义修正：父块 = 标题层级完整 section（split_by_heading 新增 whole_sections 模式，取消 4096 截断与贪心细分），无标题文档退化为 parent_size 粒度递归切分；_greedy_split 代码围栏原子化（mermaid 等不再被空行拆碎） | chunking/{heading,parent_child,__init__}.py |
+| 2026-07-26 | 孤立标题块修复：split_by_heading 新增 _merge_heading_only 后置合并（参考 WeKnora chunker coalesceTinyChunks：仅原文连续时合并，以原文切片保持 span 不变量），仅含标题行的块并入下一块（文末则向前并），覆盖 _greedy_split 三条泄漏路径（围栏前 flush、大段落硬切前 flush、溢出 flush）及空 section 父块 | chunking/heading.py |
+| 2026-07-26 | 删除文档仍被检索召回修复：DELETE /documents/{id} 联动软删 chunks + 清理向量/关键词/图谱索引（GraphManager 新增 delete_document）；DELETE /kb/{id} 联动软删 chunks；expand_parent_chunks 增加 Knowledge.deleted_at 兜底过滤历史残留；LocalVectorStore meta 落盘（meta.json）、BM25KeywordIndex corpus/meta 落盘（corpus.json + indexed_ids.json 一致性校验），修复重启后按文档删除失效与 BM25 检索全空 | api/routers/{documents,knowledge_bases}.py、storage/{vector_local,keyword_bm25s}.py、graph/builder.py、generation/context.py |
 
 ---
 
