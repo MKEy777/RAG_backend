@@ -12,7 +12,7 @@ from ..logging import get_logger, get_trace_id, new_trace_id, setup_logging, tra
 from ..models.database import init_db
 from ..settings import settings
 from .middleware import RateLimitMiddleware
-from .routers import chat, documents, faq, graph, knowledge_bases, retrieval, wiki
+from .routers import chat, documents, faq, graph, knowledge_bases, retrieval, sessions, wiki
 
 setup_logging()
 log = get_logger("api")
@@ -45,6 +45,7 @@ app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
 app.include_router(wiki.router, prefix="/api/v1/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/api/v1/graph", tags=["graph"])
 app.include_router(faq.router, prefix="/api/v1/faq", tags=["faq"])
+app.include_router(sessions.router, prefix="/api/v1/chat/sessions", tags=["sessions"])
 
 
 @app.exception_handler(RequestValidationError)
