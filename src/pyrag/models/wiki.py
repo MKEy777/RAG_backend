@@ -11,18 +11,6 @@ from .base import Base, TimestampMixin, _uuid
 # === 调度层 ===
 
 
-class WikiBuildRequest(Base):
-    __tablename__ = "wiki_build_requests"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    knowledge_base_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    generation: Mapped[int] = mapped_column(Integer, nullable=False)
-    build_input_json: Mapped[dict] = mapped_column(JSON, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
 class WikiPendingOperation(Base):
     __tablename__ = "wiki_pending_operations"
 
@@ -49,15 +37,7 @@ class WikiDeadLetter(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-class WikiLock(Base):
-    __tablename__ = "wiki_locks"
-
-    lock_key: Mapped[str] = mapped_column(String(255), primary_key=True)
-    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-# === 内容层 ===
+# === 内容层（写入即发布，无 release 机制，detail.md §步骤5） ===
 
 
 class WikiPage(Base, TimestampMixin):
@@ -82,90 +62,6 @@ class WikiPage(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-class WikiChunk(Base):
-    __tablename__ = "wiki_chunks"
-
-    wiki_chunk_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    page_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    paragraph_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-
-
-class WikiSourceRef(Base):
-    __tablename__ = "wiki_source_refs"
-
-    ref_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    revision_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    wiki_chunk_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    raw_document_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    raw_document_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    raw_child_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    raw_parent_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    raw_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-
-
-class WikiPageRevision(Base):
-    __tablename__ = "wiki_page_revisions"
-
-    revision_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    page_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    title: Mapped[str] = mapped_column(String(500), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-# === 发布层 ===
-
-
-class WikiRelease(Base):
-    __tablename__ = "wiki_releases"
-
-    release_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    knowledge_base_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    generation: Mapped[int] = mapped_column(Integer, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False)
-    fencing_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class WikiReleasePage(Base):
-    __tablename__ = "wiki_release_pages"
-
-    release_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    page_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
-
-
-class WikiActiveRelease(Base):
-    __tablename__ = "wiki_active_releases"
-
-    tenant_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    knowledge_base_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    release_id: Mapped[str] = mapped_column(String(36), nullable=False)
-
-
-class WikiPageLink(Base):
-    __tablename__ = "wiki_page_links"
-
-    revision_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    target_page_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    relation: Mapped[str | None] = mapped_column(String(50), nullable=True)
-
-
-class WikiPublishOutbox(Base):
-    __tablename__ = "wiki_publish_outbox"
-
-    outbox_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    release_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    payload_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class WikiFolder(Base, TimestampMixin):

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from ..llm.client import get_llm_client
 from ..llm.retry import wiki_llm_retry
-from ..models.wiki import WikiPage, WikiPageRevision
+from ..models.wiki import WikiPage
 from ..prompts.loader import get_prompt
 from ..settings import settings
 from ..storage.factory import get_storage
@@ -151,17 +149,6 @@ async def _write_page(
                 page.aliases = list(existing_aliases)
             page.version = (page.version or 0) + 1
 
-        session.commit()
-
-        revision = WikiPageRevision(
-            revision_id=uuid.uuid4().hex,
-            page_id=page.page_id,
-            title=page.title,
-            content=page.content or "",
-            content_hash=hashlib.sha256((page.content or "").encode()).hexdigest(),
-            created_at=datetime.now(timezone.utc),
-        )
-        session.add(revision)
         session.commit()
 
     finally:
