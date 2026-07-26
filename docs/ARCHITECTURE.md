@@ -314,6 +314,7 @@ class GraphStore(Protocol):
 | 2026-07-26 | 新增 chat_sessions/chat_messages 两表（服务端会话持久化，最近 N 轮窗口参与检索改写与生成）；新增配置 chat_history_rounds=5 | models/chat.py、migrations/0003、api/routers/{chat,sessions}.py |
 | 2026-07-26 | Celery 分 ingest/enrich 双队列（解析入库 vs 图谱/Wiki 增强），worker 默认 -Q ingest,enrich；task soft_time_limit 300→1500/hard 600→1800；解析任务重试改指数退避 5s×2^n | tasks/{celery_app,parse_tasks}.py、scripts/run_worker.py |
 | 2026-07-26 | 新增解析格式：独立图片文件（jpg/jpeg/png/webp/bmp/gif → VLM OCR 管线）、html/htm/epub/mhtml/csv（markitdown 直转）；allowed_extensions 同步扩充 | parsing/{image_parser,html_parser}.py、settings.py |
+| 2026-07-26 | WeKnora 对标 P0-P3：chat 接入共享检索管线（FAQ 分流/图谱通道/多 KB 并发/多轮改写/低召回扩展/内容签名去重）；流式 error 事件化 + 建议问题；rerank 复合分；表头跨块注入；VLM 重试/缓存；Chunk 编辑删除；FAQ 批量/导出；Wiki 页面编辑+文件夹；URL 入库；分块预览；检索评估脚本 | retrieval/*、generation/*、api/routers/*、chunking/table_header.py、parsing/*、scripts/evaluate_retrieval.py、前端对应模块 |
 
 ---
 
