@@ -117,3 +117,30 @@ async def test_graph_boost_no_vector_dependency(monkeypatch):
     hits = await gb.graph_boost("kb1", "问题", existing_ids=set())
     assert [h.chunk_id for h in hits] == ["c9"]
     assert hits[0].channel == "graph"
+
+
+async def test_chat_includes_faq_and_graph(db_session, monkeypatch):
+    from knowlink.api.routers import chat as chat_mod
+    from knowlink.retrieval.pipeline import RetrievalResult
+
+    async def fake_retrieve(session, kb_ids, query, **kw):
+        assert kw.get("enable_graph") is True
+        return RetrievalResult(
+            hits=[_cand("doc-1", content="正文")],
+            faq_hits=[_cand("faq-1", channel="faq", chunk_type="faq", content="Q: q\nA: a")],
+        )
+
+    captured = {}
+
+    async def fake_generate(query, candidates, history):
+        captured["ids"] = [c.chunk_id for c in candidates]
+        return {"answer": "ok", "references": []}
+
+    monkeypatch.setattr(chat_mod, "retrieve_candidates", fake_retrieve)
+    monkeypatch.setattr(chat_mod, "generate_answer", fake_generate)
+    monkeypatch.setattr(chat_mod, "enrich_faq_candidates", lambda s, hits: hits)
+
+    body = chat_mod.ChatRequest(kb_ids=["kb1"], query="q", stream=False)
+    resp = await chat_mod.chat(body, session=db_session)
+    assert captured["ids"] == ["faq-1", "doc-1"]
+    assert resp.answer == "ok"

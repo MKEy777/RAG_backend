@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from knowlink.api.routers import retrieval as r
 from knowlink.models.knowledge_base import KnowledgeBase
+from knowlink.retrieval import pipeline as rp
 
 
 def test_request_accepts_override_params():
@@ -59,11 +60,12 @@ async def test_route_passes_overrides_through(db_session, monkeypatch):
         captured["expand"] = True
         return candidates
 
-    monkeypatch.setattr(r, "embed_texts", fake_embed)
-    monkeypatch.setattr(r, "hybrid_search", fake_hybrid)
-    monkeypatch.setattr(r, "rrf_fusion", fake_fusion)
-    monkeypatch.setattr(r, "rerank_stage", fake_rerank)
-    monkeypatch.setattr(r, "expand_parent_chunks", fake_expand)
+    # 路由已委托共享管线，打到 pipeline 模块
+    monkeypatch.setattr(rp, "embed_texts", fake_embed)
+    monkeypatch.setattr(rp, "hybrid_search", fake_hybrid)
+    monkeypatch.setattr(rp, "rrf_fusion", fake_fusion)
+    monkeypatch.setattr(rp, "rerank_stage", fake_rerank)
+    monkeypatch.setattr(rp, "expand_parent_chunks", fake_expand)
 
     body = r.RetrievalRequest(
         kb_ids=["kb1"], query="q", top_k=7,
@@ -105,11 +107,11 @@ async def test_route_skips_rerank_and_expand_when_disabled(db_session, monkeypat
         called["expand"] = True
         return candidates
 
-    monkeypatch.setattr(r, "embed_texts", fake_embed)
-    monkeypatch.setattr(r, "hybrid_search", fake_hybrid)
-    monkeypatch.setattr(r, "rrf_fusion", fake_fusion)
-    monkeypatch.setattr(r, "rerank_stage", fake_rerank)
-    monkeypatch.setattr(r, "expand_parent_chunks", fake_expand)
+    monkeypatch.setattr(rp, "embed_texts", fake_embed)
+    monkeypatch.setattr(rp, "hybrid_search", fake_hybrid)
+    monkeypatch.setattr(rp, "rrf_fusion", fake_fusion)
+    monkeypatch.setattr(rp, "rerank_stage", fake_rerank)
+    monkeypatch.setattr(rp, "expand_parent_chunks", fake_expand)
 
     body = r.RetrievalRequest(
         kb_ids=["kb1"], query="q", top_k=3,
