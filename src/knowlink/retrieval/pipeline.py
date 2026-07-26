@@ -11,6 +11,7 @@ from ..indexing.embedder import embed_texts
 from ..logging import get_logger
 from ..models.chunk import Chunk
 from ..models.knowledge_base import KnowledgeBase
+from .dedup import dedup_candidates
 from .faq import faq_search
 from .fusion import rrf_fusion
 from .graph_boost import graph_boost
@@ -113,6 +114,8 @@ async def retrieve_candidates(
 
     if expand_parent:
         fused = expand_parent_chunks(session, fused)
+
+    fused = dedup_candidates(fused)
 
     if enable_rerank:
         reranked = await rerank_stage(query, fused, top_k=top_k, threshold=rerank_threshold)
