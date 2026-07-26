@@ -11,7 +11,9 @@ from ..indexing.embedder import embed_texts
 from ..logging import get_logger
 from ..models.chunk import Chunk
 from ..models.knowledge_base import KnowledgeBase
+from ..settings import settings
 from .dedup import dedup_candidates
+from .expansion import expand_queries
 from .faq import faq_search
 from .fusion import rrf_fusion
 from .graph_boost import graph_boost
@@ -111,6 +113,27 @@ async def retrieve_candidates(
                 continue
             fused.extend(hits)
         fused.sort(key=lambda x: x.score, reverse=True)
+
+    if doc_kb_ids and len(fused) < top_k:
+        variants = expand_queries(query)
+        if variants:
+            kw_th = (keyword_threshold if keyword_threshold is not None else settings.keyword_threshold) * 0.8
+            exp = await asyncio.gather(*[
+                hybrid_search(kb_id, v, None, top_k=recall_top_k, keyword_threshold=kw_th)
+                for v in variants for kb_id in doc_kb_ids
+            ], return_exceptions=True)
+            seen_ids = {c.chunk_id for c in fused}
+            added = 0
+            for pair in exp:
+                if isinstance(pair, Exception):
+                    continue
+                for c in pair[0] + pair[1]:
+                    if c.chunk_id not in seen_ids:
+                        seen_ids.add(c.chunk_id)
+                        fused.append(c)
+                        added += 1
+            if added:
+                log.info("低召回扩展补充", variants=len(variants), added=added)
 
     if expand_parent:
         fused = expand_parent_chunks(session, fused)
