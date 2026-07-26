@@ -95,3 +95,25 @@ async def test_partial_kb_failure_keeps_other_results(db_session, patched, monke
     result = await retrieve_candidates(db_session, ["kb-ok", "kb-bad"], "q", top_k=10)
     assert result.hits
     assert {c.chunk_id for c in result.hits} == {"kb-ok-v", "kb-ok-k"}
+
+
+async def test_graph_boost_no_vector_dependency(monkeypatch):
+    from knowlink.retrieval import graph_boost as gb
+
+    async def fake_entities(q):
+        return ["实体A"]
+
+    class FakeGM:
+        async def search_by_entities(self, kb_id, names, top_k=10):
+            return [{"chunk_id": "c9", "score": 1.5, "knowledge_id": "kb1"}]
+
+    monkeypatch.setattr(gb, "extract_query_entities", fake_entities)
+    monkeypatch.setattr("knowlink.graph.builder.get_graph_manager", lambda: FakeGM())
+    # 哨兵：若死代码仍在（调用 get_storage/vector.search）则直接报错；删除后该属性不存在，raising=False 兼容
+    def _no_storage():
+        raise AssertionError("graph_boost must not call get_storage/vector.search")
+
+    monkeypatch.setattr(gb, "get_storage", _no_storage, raising=False)
+    hits = await gb.graph_boost("kb1", "问题", existing_ids=set())
+    assert [h.chunk_id for h in hits] == ["c9"]
+    assert hits[0].channel == "graph"

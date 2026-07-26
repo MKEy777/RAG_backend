@@ -3,7 +3,6 @@ from __future__ import annotations
 from ..llm.client import get_llm_client
 from ..llm.json_repair import parse_json_array
 from ..settings import settings
-from ..storage.factory import get_storage
 from .hybrid import Candidate
 
 
@@ -32,12 +31,6 @@ async def graph_boost(
 ) -> list[Candidate]:
     entities = await extract_query_entities(query)
     if not entities:
-        return []
-
-    storage = get_storage()
-    try:
-        relations = await storage.vector.search(kb_id, query, top_k=0)
-    except Exception:
         return []
 
     from ..graph.builder import get_graph_manager
