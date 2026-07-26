@@ -422,6 +422,25 @@ def _dispatch_processing(kb: KnowledgeBase, doc_id: str, data: bytes, filename: 
         log.info("使用同步处理（Redis 不可用）", doc_id=doc_id)
 
 
+async def _save_and_dispatch(doc_id: str, kb_id: str, tenant_id: int, data: bytes, filename: str, original_key: str) -> None:
+    try:
+        from ...storage.factory import get_storage
+
+        await get_storage().objects.put(original_key, data)
+    except Exception as e:
+        log.warning("原文件存档失败", doc_id=doc_id, error=str(e)[:200])
+
+    kb = None
+    from ...models.database import SessionLocal
+    s = SessionLocal()
+    try:
+        kb = s.get(KnowledgeBase, kb_id)
+    finally:
+        s.close()
+    if kb:
+        _dispatch_processing(kb, doc_id, data, filename)
+
+
 class LocalImportBody(BaseModel):
     kb_id: str
     file_path: str
@@ -507,6 +526,61 @@ def import_local_document(
             t.join()
 
     threading.Thread(target=_sync_process, daemon=True).start()
+    return doc
+
+
+class ImportUrlBody(BaseModel):
+    kb_id: str
+    url: str
+    title: str | None = None
+
+
+@router.post("/import-url", response_model=DocResponse)
+async def import_url_document(body: ImportUrlBody, session: Session = Depends(get_session)):
+    import httpx as _httpx
+
+    kb = session.get(KnowledgeBase, body.kb_id)
+    if not kb:
+        raise HTTPException(404, "Knowledge base not found")
+    if not body.url.startswith(("http://", "https://")):
+        raise HTTPException(422, "Invalid URL")
+
+    try:
+        async with _httpx.AsyncClient(timeout=30, follow_redirects=True) as client_:
+            resp = await client_.get(body.url)
+            resp.raise_for_status()
+            data = resp.content
+    except Exception as e:
+        raise HTTPException(502, f"URL fetch failed: {e}")
+
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File too large. Max {settings.max_upload_size_mb}MB")
+
+    filename = body.title or body.url.rstrip("/").rsplit("/", 1)[-1] or "page"
+    if "html" in resp.headers.get("content-type", "") and not filename.lower().endswith((".html", ".htm")):
+        filename += ".html"
+
+    file_hash = hashlib.sha256(data).hexdigest()
+    existing = (
+        session.query(Knowledge)
+        .filter(Knowledge.knowledge_base_id == body.kb_id, Knowledge.file_hash == file_hash,
+                Knowledge.deleted_at.is_(None))
+        .first()
+    )
+    if existing:
+        return existing
+
+    doc_id = uuid.uuid4().hex
+    original_key = f"originals/{body.kb_id}/{doc_id}/{filename}"
+    doc = Knowledge(
+        id=doc_id, tenant_id=kb.tenant_id, knowledge_base_id=body.kb_id, type="file",
+        title=filename, file_name=filename, file_type=resp.headers.get("content-type", ""),
+        file_size=len(data), file_hash=file_hash, source="url", parse_status="processing",
+        metadata_={"original_key": original_key, "source_url": body.url},
+    )
+    session.add(doc)
+    session.commit()
+    await _save_and_dispatch(doc_id, body.kb_id, kb.tenant_id, data, filename, original_key)
     return doc
 
 
