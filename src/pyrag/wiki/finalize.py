@@ -9,28 +9,9 @@ from sqlalchemy.orm import Session
 from ..llm.client import get_llm_client
 from ..llm.retry import wiki_llm_retry
 from ..models.wiki import WikiFolder, WikiPage
+from ..prompts.loader import get_prompt
 from ..settings import settings
 from ..storage.factory import get_storage
-
-WIKI_INDEX_INTRO_PROMPT = (
-    "You are a wiki editor. Write a brief introduction for a wiki knowledge base index page.\n"
-    "Output: one line `# Title` + 2-3 sentences of domain overview. No directory listing.\n"
-    "IMPORTANT: Write in Chinese (except proper nouns and technical terms)."
-)
-
-WIKI_INDEX_INTRO_UPDATE_PROMPT = (
-    "You are a wiki editor. Update the existing introduction for a wiki knowledge base index page.\n"
-    "Keep existing style and format. Only update descriptions that actually changed.\n"
-    "IMPORTANT: Write in Chinese (except proper nouns and technical terms)."
-)
-
-WIKI_TAXONOMY_PROMPT = (
-    "You are organizing a wiki knowledge base into a navigation directory. "
-    "Assign each item below to a directory path (category) so the whole set lands on ONE coherent tree.\n"
-    "Prefer reusing existing folders. Do not use entity/concept type names as folder names.\n"
-    "IMPORTANT: Folder names in path MUST be in Chinese (except proper nouns and technical terms).\n"
-    "Output JSON: {\"assignments\": [{\"slug\": \"entity/xxx\", \"path\": [\"分类1\", \"子分类\"]}, ...]}"
-)
 
 WIKI_LINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 
@@ -80,10 +61,10 @@ async def _rebuild_index_page(session: Session, kb_id: str, tenant_id: int) -> N
 
     try:
         if index_page and index_page.content:
-            prompt = WIKI_INDEX_INTRO_UPDATE_PROMPT
+            prompt = get_prompt("wiki", "WikiIndexIntroUpdatePrompt")
             user_msg = f"<current_intro>\n{index_page.content}\n</current_intro>\n<document_summaries>\n{doc_summaries}\n</document_summaries>"
         else:
-            prompt = WIKI_INDEX_INTRO_PROMPT
+            prompt = get_prompt("wiki", "WikiIndexIntroPrompt")
             user_msg = f"<document_summaries>\n{doc_summaries}\n</document_summaries>"
 
         @wiki_llm_retry()
@@ -144,7 +125,7 @@ async def _assign_taxonomy(session: Session, kb_id: str) -> None:
         @wiki_llm_retry()
         async def _call():
             return await client.chat(
-                [{"role": "system", "content": WIKI_TAXONOMY_PROMPT}, {"role": "user", "content": user_msg}],
+                [{"role": "system", "content": get_prompt("wiki", "WikiTaxonomyPlanPrompt")}, {"role": "user", "content": user_msg}],
                 temperature=0.0,
                 max_tokens=2048,
                 purpose="wiki:classify",

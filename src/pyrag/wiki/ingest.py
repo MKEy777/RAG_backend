@@ -13,34 +13,8 @@ from ..logging import bind_kb
 from ..models.chunk import Chunk
 from ..models.knowledge import Knowledge
 from ..models.knowledge_base import KnowledgeBase
+from ..prompts.loader import get_prompt, load_prompt_file
 from ..settings import settings
-
-WIKI_SUMMARY_PROMPT = (
-    "You are a wiki editor. Given the following document content, create a structured wiki summary page in Markdown format.\n"
-    "First line MUST be: SUMMARY: {one sentence summary, 15-40 words}\n"
-    "Use ## for sections, ### for subsections.\n"
-    "When available wiki pages' names appear in text, use [[slug|DisplayName]] link format.\n"
-    "End with ## 关键要点 as a bullet list.\n"
-    "IMPORTANT: Write ALL content in Chinese (except proper nouns, technical terms, and code).\n"
-    "If content is empty, output: SUMMARY: 本文档未提取到有效文本内容。"
-)
-
-WIKI_CANDIDATE_SLUG_PROMPT = (
-    "You are a knowledge extraction system. Analyze the following document and list all significant "
-    "entities AND key concepts as a lightweight candidate set.\n"
-    "Output JSON: {\"entities\": [...], \"concepts\": [...]}\n"
-    "Entity fields: name, slug (format entity/xxx), aliases, description (one sentence), details (1-3 sentences, max 300 chars)\n"
-    "Concept fields: same as entity, slug format concept/xxx\n"
-    "IMPORTANT: name, description, details MUST be in Chinese (except proper nouns and technical terms). slug stays in English/pinyin.\n"
-    "Empty content returns empty arrays. Do not fabricate."
-)
-
-WIKI_CITATION_PROMPT = (
-    "You are a precise citation system. Scan the batch of document chunks and decide, "
-    "for each candidate entity/concept below, which chunks substantively discuss it.\n"
-    "Output: {\"citations\": {\"entity/xxx\": [\"chunk_id1\", \"chunk_id2\"], ...}, \"new_slugs\": []}\n"
-    "Only select chunks that provide concrete facts about the candidate. Mere mentions do not count."
-)
 
 
 @dataclass
@@ -76,7 +50,8 @@ async def map_document(session: Session, knowledge_id: str, kb_id: str) -> MapRe
 
 
 async def map_from_text(
-    source_text: str, chunk_dicts: list[dict], kb_id: str, knowledge_id: str
+    source_text: str, chunk_dicts: list[dict], kb_id: str, knowledge_id: str,
+    granularity: str = "Standard",
 ) -> MapResult | None:
     """LLM-only map phase, safe for concurrent execution (no DB access)."""
     bind_kb(kb_id, doc_id=knowledge_id)
@@ -89,7 +64,7 @@ async def map_from_text(
     result = MapResult()
 
     summary_task = _generate_summary(client, source_text)
-    candidate_task = _extract_candidates(client, source_text)
+    candidate_task = _extract_candidates(client, source_text, granularity)
     summary_result, candidates = await asyncio.gather(summary_task, candidate_task)
 
     result.overview_content = summary_result.get("content", "")
@@ -107,7 +82,7 @@ async def _generate_summary(client, source_text: str) -> dict:
     async def _call():
             return await client.chat(
             [
-                {"role": "system", "content": WIKI_SUMMARY_PROMPT},
+                {"role": "system", "content": get_prompt("wiki", "WikiSummaryPrompt")},
                 {"role": "user", "content": source_text},
             ],
             temperature=0.3,
@@ -128,12 +103,15 @@ async def _generate_summary(client, source_text: str) -> dict:
         return {"summary": "", "content": ""}
 
 
-async def _extract_candidates(client, source_text: str) -> list[dict]:
+async def _extract_candidates(client, source_text: str, granularity: str = "Standard") -> list[dict]:
+    guidance = (load_prompt_file("wiki").get("WikiGranularityGuidance") or {}).get(granularity, "")
+    system = get_prompt("wiki", "WikiCandidateSlugPrompt", {"GranularityGuidance": guidance})
+
     @wiki_llm_retry()
     async def _call():
         return await client.chat(
             [
-                {"role": "system", "content": WIKI_CANDIDATE_SLUG_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": source_text},
             ],
             temperature=0.0,
@@ -195,7 +173,7 @@ async def _map_citations(
                 async def _call():
                     return await client.chat(
                         [
-                            {"role": "system", "content": WIKI_CITATION_PROMPT},
+                            {"role": "system", "content": get_prompt("wiki", "WikiChunkCitationPrompt")},
                             {"role": "user", "content": user_msg},
                         ],
                         temperature=0.0,

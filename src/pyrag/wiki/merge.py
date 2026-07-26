@@ -9,27 +9,10 @@ from sqlalchemy.orm import Session
 from ..llm.client import get_llm_client
 from ..llm.retry import wiki_llm_retry
 from ..models.wiki import WikiPage, WikiPageRevision
+from ..prompts.loader import get_prompt
 from ..settings import settings
 from ..storage.factory import get_storage
 from .ingest import MapResult
-
-WIKI_PAGE_MODIFY_PROMPT = (
-    "You are a wiki editor tasked with updating an existing wiki page. "
-    "Process NEW information to add AND/OR deleted documents whose contributions must be REMOVED.\n"
-    "First line: SUMMARY: {one sentence summary}\n"
-    "Stay close to source wording. Do not add filler phrases. "
-    "Use [[slug|DisplayName]] for wiki links only to valid pages.\n"
-    "If page becomes empty after removal, output: SUMMARY: (empty page)"
-)
-
-WIKI_DEDUP_PROMPT = (
-    "You are a strict deduplication system. Given newly extracted items and existing wiki pages, "
-    "determine which new items refer to the exact same real-world entity or concept.\n"
-    "Three conditions must ALL hold: (1) same referent; (2) name variant (abbreviation, translation, spelling); "
-    "(3) type compatible.\n"
-    "related ≠ same. Prefer separate pages over wrong merges.\n"
-    "Output: {\"merges\": {\"new_slug\": \"existing_slug\", ...}}"
-)
 
 
 async def reduce_pages(
@@ -169,7 +152,7 @@ async def _merge_content(existing: str, new_info: str, title: str, slug: str) ->
         async def _call():
             return await client.chat(
                 [
-                    {"role": "system", "content": WIKI_PAGE_MODIFY_PROMPT},
+                    {"role": "system", "content": get_prompt("wiki", "WikiPageModifyPrompt")},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.3,

@@ -88,6 +88,9 @@ async def _wiki_build_async(
 ) -> int:
     sem = asyncio.Semaphore(settings.wiki_map_concurrency)
 
+    kb = session.get(KnowledgeBase, kb_id)
+    granularity = ((kb.wiki_config or {}).get("extraction_granularity") or "Standard") if kb else "Standard"
+
     # 预加载切块（串行 DB 读，毫秒级）
     doc_data: list[tuple] = []
     for op in ops:
@@ -117,7 +120,7 @@ async def _wiki_build_async(
         op, doc_title, source_text, chunk_dicts = item
         async with sem:
             try:
-                result = await map_from_text(source_text, chunk_dicts, kb_id, op.document_id)
+                result = await map_from_text(source_text, chunk_dicts, kb_id, op.document_id, granularity)
                 return (op, doc_title, result, None)
             except Exception as e:
                 return (op, doc_title, None, e)

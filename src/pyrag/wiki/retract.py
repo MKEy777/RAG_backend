@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ..llm.client import get_llm_client
 from ..llm.retry import wiki_llm_retry
 from ..models.wiki import WikiPage
-from .merge import WIKI_PAGE_MODIFY_PROMPT
+from ..prompts.loader import get_prompt
 
 
 async def retract_document(
@@ -77,7 +77,7 @@ async def _rewrite_without_source(content: str, deleted_title: str) -> str:
         async def _call():
             return await client.chat(
                 [
-                    {"role": "system", "content": WIKI_PAGE_MODIFY_PROMPT},
+                    {"role": "system", "content": get_prompt("wiki", "WikiPageModifyPrompt")},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.3,
