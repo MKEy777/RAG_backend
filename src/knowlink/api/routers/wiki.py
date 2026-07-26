@@ -300,3 +300,19 @@ def delete_folder(kb_id: str, folder_id: str, session: Session = Depends(get_ses
     session.delete(row)
     session.commit()
     return {"status": "deleted"}
+
+
+@router.delete("/{kb_id}/pages")
+def clear_wiki_pages(kb_id: str, session: Session = Depends(get_session)):
+    now = datetime.now()
+    count = (
+        session.query(WikiPage)
+        .filter(WikiPage.knowledge_base_id == kb_id, WikiPage.deleted_at.is_(None))
+        .update({"deleted_at": now})
+    )
+    session.query(WikiPendingOperation).filter(
+        WikiPendingOperation.knowledge_base_id == kb_id,
+        WikiPendingOperation.completed_at.is_(None),
+    ).delete()
+    session.commit()
+    return {"status": "cleared", "deleted": count}
