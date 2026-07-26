@@ -311,6 +311,7 @@ class GraphStore(Protocol):
 | 2026-07-26 | 文档管理增强：① 上传时原文件字节落对象存储 originals/{kb_id}/{doc_id}/{filename}（metadata 记 original_key/original_filename），为重解析与下载提供源；② 新增 POST /documents/{id}/reparse（读存档字节复用解析分发，索引管线自带旧切块清理）、PATCH /documents/{id}（重命名，仅展示字段）、GET /documents/{id}/download；③ needs_images 检测持久化进 metadata + Knowledge.needs_images property（列表接口带出，前端按需显示补图按钮）；④ 任务进度加进程内存回退（get_progress：Redis 优先、内存兜底），同步模式 /status 也能返回 parsing/chunking/embedding/vlm 阶段；⑤ KB 新增 PATCH（name/description/enable_wiki/enable_graph/enable_qa），KBResponse 增 enable_qa | api/routers/documents.py、api/routers/knowledge_bases.py、tasks/parse_tasks.py、models/knowledge.py |
 | 2026-07-26 | FAQ 自动问句生成并入 Wiki 构建：wiki/build.py 每文档 reduce 完成后串行调 generate_faq_chunks（失败不影响 wiki op）；question_gen.py 去掉独立 enabled 检查并新增幂等清理（软删本文档旧 generated 问句 + delete_chunks 清向量）；移除上传/导入路径的 _run_question_gen_sync 独立线程与 KB enable_qa 开关（API/前端同步移除，question_generation_config 列保留未用）；附带修复 Celery 路径此前从不触发问句生成的缺陷 | wiki/build.py、indexing/question_gen.py、api/routers/{documents,knowledge_bases}.py、前端 DetailView.vue、api/knowledgeBase.ts |
 | 2026-07-26 | 索引管线改先写后删：先写新 chunk/向量/BM25，成功后按旧 chunk id 软删+清索引，消除重建期“文档无索引”窗口；失败时清理已写的新索引条目 | indexing/pipeline.py |
+| 2026-07-26 | 新增 chat_sessions/chat_messages 两表（服务端会话持久化，最近 N 轮窗口参与检索改写与生成）；新增配置 chat_history_rounds=5 | models/chat.py、migrations/0003、api/routers/{chat,sessions}.py |
 
 ---
 

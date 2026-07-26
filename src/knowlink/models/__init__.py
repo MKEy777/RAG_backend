@@ -1,4 +1,5 @@
 from .base import Base
+from .chat import ChatMessage, ChatSession
 from .knowledge_base import KnowledgeBase
 from .knowledge import Knowledge
 from .artifact import Artifact
@@ -12,6 +13,8 @@ from .wiki import (
 
 __all__ = [
     "Base",
+    "ChatMessage",
+    "ChatSession",
     "KnowledgeBase",
     "Knowledge",
     "Artifact",

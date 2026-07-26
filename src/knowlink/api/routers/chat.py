@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ...generation.answer import generate_answer, generate_answer_stream
+from ...models.chat import ChatMessage, ChatSession
 from ...models.database import get_session
 from ...retrieval.pipeline import enrich_faq_candidates, retrieve_candidates
 from ...retrieval.rewrite import rewrite_query
@@ -49,3 +50,14 @@ async def chat(body: ChatRequest, session: Session = Depends(get_session)):
 
     answer = await generate_answer(body.query, candidates, body.history)
     return ChatResponse(answer=answer["answer"], references=answer["references"])
+
+
+def _load_history(session: Session, session_id: str, rounds: int) -> list[dict]:
+    rows = (
+        session.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(rounds * 2)
+        .all()
+    )
+    return [{"role": r.role, "content": r.content} for r in reversed(rows)]

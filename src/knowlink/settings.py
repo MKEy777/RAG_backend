@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     rerank_threshold: float = 0.2  # detail.md §混合检索
     wiki_boost: float = 1.3  # detail.md §混合检索
 
+    # chat
+    chat_history_rounds: int = 5
+
     # wiki
     wiki_debounce_ingest_s: int = 30  # detail.md Wiki §步骤1
     wiki_debounce_followup_s: int = 5  # detail.md Wiki §步骤1
