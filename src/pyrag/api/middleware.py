@@ -15,7 +15,9 @@ _window: dict[str, list[float]] = {}
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.url.path == "/health" or request.url.path == "/metrics":
+        path = request.url.path
+        # /status 为前端进度轮询（多文档并行时可达 80+次/分），不计入限流窗口
+        if path in ("/health", "/metrics") or path.endswith("/status"):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"

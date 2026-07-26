@@ -12,6 +12,7 @@ async def faq_search(
     query: str,
     query_vector: np.ndarray,
     match_count: int = 5,
+    tag_priority: list[str] | None = None,
 ) -> list[Candidate]:
     storage = get_storage()
     max_iterations = settings.faq_max_iterations
@@ -44,5 +45,18 @@ async def faq_search(
         if len(all_results) >= match_count:
             break
 
-    all_results.sort(key=lambda x: x.score, reverse=True)
-    return all_results[:match_count]
+    ordered = sort_faq_candidates(all_results, tag_priority)
+    return ordered[:match_count]
+
+
+def sort_faq_candidates(
+    candidates: list[Candidate], tag_priority: list[str] | None = None
+) -> list[Candidate]:
+    priority = {t: i for i, t in enumerate(tag_priority or [])}
+
+    def key(c: Candidate):
+        tags = (c.metadata or {}).get("tags") or []
+        rank = min((priority[t] for t in tags if t in priority), default=len(priority))
+        return (rank, -c.score)
+
+    return sorted(candidates, key=key)

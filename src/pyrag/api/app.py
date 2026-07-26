@@ -12,7 +12,7 @@ from ..logging import get_logger, get_trace_id, new_trace_id, setup_logging, tra
 from ..models.database import init_db
 from ..settings import settings
 from .middleware import RateLimitMiddleware
-from .routers import chat, documents, graph, knowledge_bases, retrieval, wiki
+from .routers import chat, documents, faq, graph, knowledge_bases, retrieval, wiki
 
 setup_logging()
 log = get_logger("api")
@@ -44,6 +44,7 @@ app.include_router(retrieval.router, prefix="/api/v1/retrieval", tags=["retrieva
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
 app.include_router(wiki.router, prefix="/api/v1/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/api/v1/graph", tags=["graph"])
+app.include_router(faq.router, prefix="/api/v1/faq", tags=["faq"])
 
 
 @app.exception_handler(RequestValidationError)
@@ -83,6 +84,25 @@ def on_startup():
         log.warning("数据库迁移失败_回退创建所有表", error=str(e))
         init_db()
     log.info("服务启动完成")
+
+
+@app.on_event("startup")
+async def reconcile_indexes_on_startup():
+    import asyncio
+
+    async def _run():
+        from ..indexing.reconcile import reconcile_all_indexes
+        from ..models.database import SessionLocal
+
+        session = SessionLocal()
+        try:
+            await reconcile_all_indexes(session)
+        except Exception as e:
+            log.warning("启动索引对账失败", error=str(e))
+        finally:
+            session.close()
+
+    asyncio.create_task(_run())
 
 
 @app.get("/health")

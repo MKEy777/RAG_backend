@@ -48,6 +48,7 @@ class RetrievalHit(BaseModel):
 
 class RetrievalResponse(BaseModel):
     hits: list[RetrievalHit]
+    faq_hits: list[RetrievalHit] = []
 
 
 @router.post("", response_model=RetrievalResponse)
@@ -61,7 +62,23 @@ async def retrieve(body: RetrievalRequest, session: Session = Depends(get_sessio
 
     all_vec = []
     all_kw = []
+
+    from ...models.knowledge_base import KnowledgeBase
+    from ...retrieval.faq import faq_search
+
+    faq_hits = []
+    doc_kb_ids: list[str] = []
     for kb_id in body.kb_ids:
+        kb = session.get(KnowledgeBase, kb_id)
+        if kb and kb.type == "faq":
+            # FAQ 独立路径：不参与融合与 wiki 加权（detail.md §FAQ 检索方式）
+            if query_vector is not None:
+                tag_priority = (kb.faq_config or {}).get("tag_priority", [])
+                faq_hits.extend(await faq_search(kb_id, body.query, query_vector, body.top_k, tag_priority))
+        else:
+            doc_kb_ids.append(kb_id)
+
+    for kb_id in doc_kb_ids:
         vec, kw = await hybrid_search(kb_id, body.query, query_vector)
         all_vec.extend(vec)
         all_kw.extend(kw)
@@ -95,4 +112,19 @@ async def retrieve(body: RetrievalRequest, session: Session = Depends(get_sessio
         )
         for c in reranked
     ]
-    return RetrievalResponse(hits=hits)
+
+    faq_out = []
+    if faq_hits:
+        from ...models.chunk import Chunk as _C
+
+        rows = session.query(_C).filter(_C.id.in_([h.chunk_id for h in faq_hits])).all()
+        by_id = {c.id: c for c in rows}
+        for h in faq_hits:
+            ck = by_id.get(h.chunk_id)
+            meta = (ck.metadata_ or {}) if ck else {}
+            faq_out.append(RetrievalHit(
+                chunk_id=h.chunk_id, score=h.score, channel="faq", chunk_type="faq",
+                title_path="", document_id=h.document_id,
+                content=f"Q: {ck.content if ck else ''}\nA: {meta.get('answer', '')}"[:500],
+            ))
+    return RetrievalResponse(hits=hits, faq_hits=faq_out)
