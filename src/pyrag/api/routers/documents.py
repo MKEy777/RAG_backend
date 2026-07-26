@@ -213,6 +213,7 @@ def _run_wiki_sync(kb_id: str, knowledge_id: str):
     import traceback
     from ...models.database import SessionLocal
     from ...wiki.build import run_wiki_build
+    from ...wiki.queue import enqueue_ingest
 
     dbg("[Wiki] 开始构建")
     session = SessionLocal()
@@ -224,6 +225,8 @@ def _run_wiki_sync(kb_id: str, knowledge_id: str):
         )
         session.commit()
 
+        # 显式入队本文档：重解析时同样触发 wiki 更新（replace 语义）
+        enqueue_ingest(session, kb_id, knowledge_id)
         run_wiki_build(session, kb_id)
 
         session.execute(

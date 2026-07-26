@@ -118,7 +118,7 @@ def build_wiki(kb_id: str):
         def _run_wiki_sync():
             session = SessionLocal()
             try:
-                run_wiki_build(session, kb_id)
+                run_wiki_build(session, kb_id, enqueue_missing=True)
             except Exception as e:
                 log.error("同步 Wiki 构建失败", kb_id=kb_id, error=str(e))
             finally:

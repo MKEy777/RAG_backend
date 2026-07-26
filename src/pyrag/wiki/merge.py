@@ -27,6 +27,21 @@ async def reduce_pages(
     storage = get_storage()
     lock = storage.lock
 
+    # 重解析 replace：本文档旧贡献中不再出现的 slug 撤回（detail.md §增量更新）
+    new_slugs = {c.get("slug") for c in map_result.candidates if c.get("slug")}
+    if map_result.overview_content:
+        new_slugs.add(f"overview/{document_id}")
+    old_pages = [
+        p for p in session.query(WikiPage)
+        .filter(WikiPage.knowledge_base_id == kb_id, WikiPage.deleted_at.is_(None))
+        .all()
+        if any(ref.split("|", 1)[0] == document_id for ref in (p.source_refs or []))
+    ]
+    stale = [p for p in old_pages if p.slug not in new_slugs]
+    if stale:
+        from .retract import retract_pages
+        await retract_pages(session, kb_id, document_id, doc_title, stale)
+
     if map_result.overview_content:
         # slug 用 doc_id 防同名文档撞页（ARCHITECTURE.md §4.6）
         slug = f"overview/{document_id}"
@@ -113,8 +128,12 @@ async def _write_page(
             )
             session.add(page)
         else:
+            is_reparse = source_ref in (page.source_refs or [])
             if content and page.content:
-                merged = await _merge_content(page.content, content, title, slug)
+                merged = await _merge_content(
+                    page.content, content, title, slug,
+                    replaced_doc=doc_title if is_reparse else None,
+                )
                 page.content = merged
             elif content:
                 page.content = content
@@ -150,10 +169,18 @@ async def _write_page(
             await lock.release(lock_key)
 
 
-async def _merge_content(existing: str, new_info: str, title: str, slug: str) -> str:
+async def _merge_content(
+    existing: str, new_info: str, title: str, slug: str,
+    replaced_doc: str | None = None,
+) -> str:
     client = get_llm_client()
+    replace_note = (
+        f"<replaced_document>{replaced_doc}</replaced_document>\n"
+        "The document above was re-parsed. REPLACE its previous contribution with the new information instead of appending.\n"
+        if replaced_doc else ""
+    )
     user_msg = (
-        f"Page: {title} (slug: {slug})\n"
+        f"Page: {title} (slug: {slug})\n{replace_note}"
         f"<existing_page_content>\n{existing}\n</existing_page_content>\n"
         f"<new_information>\n{new_info}\n</new_information>"
     )

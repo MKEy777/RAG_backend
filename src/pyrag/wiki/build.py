@@ -21,29 +21,31 @@ from .queue import enqueue_ingest, mark_completed, mark_failed, peek_batch
 log = get_logger("wiki_build")
 
 
-def run_wiki_build(session: Session, kb_id: str) -> int:
+def run_wiki_build(session: Session, kb_id: str, enqueue_missing: bool = False) -> int:
     kb = session.get(KnowledgeBase, kb_id)
     tenant_id = kb.tenant_id if kb else 1
 
-    processed_op = exists().where(
-        and_(
-            WikiPendingOperation.document_id == Knowledge.id,
-            WikiPendingOperation.knowledge_base_id == kb_id,
-            WikiPendingOperation.completed_at.is_not(None),
+    if enqueue_missing:
+        # 引导扫描：仅手动 /wiki/build 使用；常规路径由解析完成方显式入队
+        processed_op = exists().where(
+            and_(
+                WikiPendingOperation.document_id == Knowledge.id,
+                WikiPendingOperation.knowledge_base_id == kb_id,
+                WikiPendingOperation.completed_at.is_not(None),
+            )
         )
-    )
-    docs = (
-        session.query(Knowledge)
-        .filter(
-            Knowledge.knowledge_base_id == kb_id,
-            Knowledge.parse_status == "completed",
-            Knowledge.deleted_at.is_(None),
-            ~processed_op,
+        docs = (
+            session.query(Knowledge)
+            .filter(
+                Knowledge.knowledge_base_id == kb_id,
+                Knowledge.parse_status == "completed",
+                Knowledge.deleted_at.is_(None),
+                ~processed_op,
+            )
+            .all()
         )
-        .all()
-    )
-    for doc in docs:
-        enqueue_ingest(session, kb_id, doc.id)
+        for doc in docs:
+            enqueue_ingest(session, kb_id, doc.id)
 
     session.query(WikiPendingOperation).filter(
         WikiPendingOperation.knowledge_base_id == kb_id,

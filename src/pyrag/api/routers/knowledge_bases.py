@@ -89,6 +89,7 @@ def get_kb(kb_id: str, session: Session = Depends(get_session)):
 
 @router.delete("/{kb_id}")
 def delete_kb(kb_id: str, session: Session = Depends(get_session)):
+    from ...models.chunk import Chunk
     from ...models.knowledge import Knowledge
     from datetime import datetime, timezone
 
@@ -96,11 +97,16 @@ def delete_kb(kb_id: str, session: Session = Depends(get_session)):
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
 
-    # 软删除知识库下的所有文档
+    now = datetime.now(timezone.utc)
+    # 软删除知识库下的所有文档及切块
     session.query(Knowledge).filter(
         Knowledge.knowledge_base_id == kb_id,
         Knowledge.deleted_at.is_(None)
-    ).update({"deleted_at": datetime.now(timezone.utc)})
+    ).update({"deleted_at": now})
+    session.query(Chunk).filter(
+        Chunk.knowledge_base_id == kb_id,
+        Chunk.deleted_at.is_(None)
+    ).update({"deleted_at": now})
 
     # 删除知识库
     session.delete(kb)

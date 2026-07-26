@@ -139,7 +139,7 @@ def wiki_build_task(self, kb_id: str):
 
         kb = session.get(KnowledgeBase, kb_id)
         bind_kb(kb_id, kb_name=kb.name if kb else "")
-        run_wiki_build(session, kb_id)
+        run_wiki_build(session, kb_id, enqueue_missing=True)
     except Exception as e:
         log.error("Wiki 构建任务失败", kb_id=kb_id, error=str(e))
     finally:
