@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 100
     allowed_extensions: list[str] = [
         ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".md", ".txt", ".csv", ".zip",
+        ".html", ".htm", ".epub", ".mhtml",
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif",
     ]
     rate_limit_per_minute: int = 60
     max_kb_ids_per_query: int = 20

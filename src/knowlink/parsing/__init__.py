@@ -8,6 +8,8 @@ from . import docx_parser  # noqa: F401
 from . import excel_parser  # noqa: F401
 from . import pptx_parser  # noqa: F401
 from . import text_parser  # noqa: F401
+from . import html_parser  # noqa: F401
+from . import image_parser  # noqa: F401
 
 __all__ = [
     "ImageRef",
