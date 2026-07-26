@@ -82,6 +82,7 @@ async def _rewrite_without_source(content: str, deleted_title: str) -> str:
                 ],
                 temperature=0.3,
                 max_tokens=4096,
+                purpose="wiki:retract",
             )
 
         resp = await _call()

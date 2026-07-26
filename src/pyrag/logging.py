@@ -34,28 +34,43 @@ def _add_trace_id(logger, method_name, event_dict):
     return event_dict
 
 
+def bind_kb(kb_id: str, doc_id: str = "", kb_name: str = "", filename: str = "") -> None:
+    structlog.contextvars.bind_contextvars(kb_id=kb_id)
+    if doc_id:
+        structlog.contextvars.bind_contextvars(doc_id=doc_id)
+    if kb_name:
+        structlog.contextvars.bind_contextvars(kb_name=kb_name)
+    if filename:
+        structlog.contextvars.bind_contextvars(filename=filename)
+
+
+def unbind_kb() -> None:
+    structlog.contextvars.unbind_contextvars("kb_id", "doc_id", "kb_name", "filename")
+
+
 def setup_logging(level: str = "INFO") -> None:
     numeric_level = logging.getLevelName(level.upper())
 
-    root = logging.getLogger()
-    if not root.handlers:
-        handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-7s [%(name)s] %(message)s", datefmt="%H:%M:%S")
-        )
-        root.addHandler(handler)
-    root.setLevel(numeric_level)
+    logging.basicConfig(
+        stream=sys.stderr,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+        level=numeric_level,
+        force=True,
+    )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)
 
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             _add_trace_id,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.JSONRenderer(ensure_ascii=False),
+            structlog.dev.ConsoleRenderer(
+                pad_event=0,
+                level_styles=structlog.dev.ConsoleRenderer.get_default_level_styles(),
+            ),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
         context_class=dict,

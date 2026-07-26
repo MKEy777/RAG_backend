@@ -65,6 +65,7 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 4096,
+        purpose: str = "",
     ) -> str:
         if not _chat_breaker.allow_request():
             raise CircuitOpenError("llm_chat")
@@ -90,13 +91,13 @@ class LLMClient:
                 resp.raise_for_status()
             data = resp.json()
             _chat_breaker.record_success()
-            log.info("LLM对话成功", model=model, duration_ms=round((time.perf_counter() - start) * 1000, 1))
+            log.info("LLM对话成功", purpose=purpose, model=model, duration_ms=round((time.perf_counter() - start) * 1000, 1))
             return data["choices"][0]["message"]["content"]
         except CircuitOpenError:
             raise
         except Exception as e:
             _chat_breaker.record_failure()
-            log.error("LLM对话失败", model=model, error=str(e), duration_ms=round((time.perf_counter() - start) * 1000, 1))
+            log.error("LLM对话失败", purpose=purpose, model=model, error=str(e), duration_ms=round((time.perf_counter() - start) * 1000, 1))
             raise
 
     async def chat_stream(
@@ -173,6 +174,7 @@ class LLMClient:
         prompt: str,
         model: str | None = None,
         mime: str = "image/jpeg",
+        purpose: str = "",
     ) -> str:
         if not _chat_breaker.allow_request():
             raise CircuitOpenError("llm_chat")
@@ -200,13 +202,13 @@ class LLMClient:
                 resp.raise_for_status()
             data = resp.json()
             _chat_breaker.record_success()
-            log.info("LLM视觉模型成功", model=model, duration_ms=round((time.perf_counter() - start) * 1000, 1))
+            log.info("LLM视觉模型成功", purpose=purpose, model=model, duration_ms=round((time.perf_counter() - start) * 1000, 1))
             return data["choices"][0]["message"]["content"]
         except CircuitOpenError:
             raise
         except Exception as e:
             _chat_breaker.record_failure()
-            log.error("LLM视觉模型失败", model=model, error=str(e), duration_ms=round((time.perf_counter() - start) * 1000, 1))
+            log.error("LLM视觉模型失败", purpose=purpose, model=model, error=str(e), duration_ms=round((time.perf_counter() - start) * 1000, 1))
             raise
 
 

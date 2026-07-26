@@ -62,6 +62,7 @@ def parse_and_index_task(self, knowledge_id: str, kb_id: str, tenant_id: int, fi
         )
         _update_progress(knowledge_id, "completed", 100)
         log.info("解析任务完成", knowledge_id=knowledge_id)
+        wiki_build_task.delay(kb_id)
     except ParserCapabilityError as e:
         _update_progress(knowledge_id, "failed", 0)
         session.execute(
@@ -92,8 +93,15 @@ def build_graph_task(self, kb_id: str, knowledge_id: str):
     try:
         from sqlalchemy import select
 
-        from ..models.chunk import Chunk
         from ..graph.builder import get_graph_manager
+        from ..logging import bind_kb
+        from ..models.chunk import Chunk
+        from ..models.knowledge import Knowledge
+        from ..models.knowledge_base import KnowledgeBase
+
+        kb = session.get(KnowledgeBase, kb_id)
+        doc = session.get(Knowledge, knowledge_id)
+        bind_kb(kb_id, doc_id=knowledge_id, kb_name=kb.name if kb else "", filename=doc.file_name if doc else "")
 
         stmt = (
             select(Chunk)
@@ -121,5 +129,18 @@ def build_graph_task(self, kb_id: str, knowledge_id: str):
 
 
 @celery_app.task(bind=True)
-def wiki_ingest_task(self, kb_id: str, knowledge_id: str):
-    pass
+def wiki_build_task(self, kb_id: str):
+    log.info("Wiki 构建任务开始", kb_id=kb_id)
+    session = SessionLocal()
+    try:
+        from ..logging import bind_kb
+        from ..models.knowledge_base import KnowledgeBase
+        from ..wiki.build import run_wiki_build
+
+        kb = session.get(KnowledgeBase, kb_id)
+        bind_kb(kb_id, kb_name=kb.name if kb else "")
+        run_wiki_build(session, kb_id)
+    except Exception as e:
+        log.error("Wiki 构建任务失败", kb_id=kb_id, error=str(e))
+    finally:
+        session.close()

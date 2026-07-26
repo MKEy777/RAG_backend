@@ -25,7 +25,7 @@ async def process_image_cascade(
 
     if use_ocr:
         try:
-            ocr_text = await client.vlm(image.base64, VLM_OCR_PROMPT, mime=image.mime)
+            ocr_text = await client.vlm(image.base64, VLM_OCR_PROMPT, mime=image.mime, purpose="vlm:ocr")
             if ocr_text and ocr_text.strip() != "No text content":
                 result["ocr_text"] = ocr_text.strip()
         except Exception:
@@ -33,7 +33,7 @@ async def process_image_cascade(
 
     if use_vlm and not result["ocr_text"]:
         try:
-            caption = await client.vlm(image.base64, VLM_CAPTION_PROMPT, mime=image.mime)
+            caption = await client.vlm(image.base64, VLM_CAPTION_PROMPT, mime=image.mime, purpose="vlm:caption")
             if caption:
                 result["caption"] = caption.strip()
         except Exception:

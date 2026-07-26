@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+
 import logging as _logging
 
 from ...logging import get_logger
@@ -128,12 +130,42 @@ def _run_graph_sync(kb_id: str, knowledge_id: str):
         session.close()
 
 
+def _run_wiki_sync(kb_id: str):
+    import traceback
+    from ...models.database import SessionLocal
+    from ...wiki.build import run_wiki_build
+
+    dbg("[Wiki] 开始构建")
+    session = SessionLocal()
+    try:
+        run_wiki_build(session, kb_id)
+        dbg("[Wiki] 构建完成")
+    except Exception as e:
+        dbg(f"[Wiki] 失败: {e}")
+        traceback.print_exc()
+    finally:
+        session.close()
+
+
 class DocResponse(BaseModel):
     id: str
     knowledge_base_id: str
     title: str | None
     file_name: str | None
     parse_status: str
+
+    class Config:
+        from_attributes = True
+
+
+class ChunkResponse(BaseModel):
+    id: str
+    content: str
+    chunk_type: str
+    parent_chunk_id: str | None
+    start_at: int | None
+    end_at: int | None
+    created_at: datetime | None
 
     class Config:
         from_attributes = True
@@ -194,17 +226,24 @@ async def upload_document(
     log.info("上传成功", kb_id=kb_id, doc_id=doc.id, filename=filename, size=len(data))
 
     redis_ok = _is_redis_available()
+    graph_enabled = (kb.graph_config or {}).get("enabled", True)
+    wiki_enabled = (kb.wiki_config or {}).get("enabled", True)
 
     if redis_ok:
         parse_and_index_task.delay(doc.id, kb_id, kb.tenant_id, data, filename)
-        build_graph_task.delay(kb_id, doc.id)
+        if graph_enabled:
+            build_graph_task.delay(kb_id, doc.id)
         log.info("使用 Celery 异步处理", doc_id=doc.id)
     else:
         import threading
 
         def _sync_process():
+            bind_kb(kb_id, doc_id=doc.id, kb_name=kb.name, filename=doc.file_name or filename)
             _run_parse_sync(doc.id, kb_id, kb.tenant_id, data, filename)
-            _run_graph_sync(kb_id, doc.id)
+            if graph_enabled:
+                _run_graph_sync(kb_id, doc.id)
+            if wiki_enabled:
+                _run_wiki_sync(kb_id)
 
         threading.Thread(target=_sync_process, daemon=True).start()
         log.info("使用同步处理（Redis 不可用）", doc_id=doc.id)
@@ -270,7 +309,7 @@ def get_document_status(doc_id: str, session: Session = Depends(get_session)):
 
 @router.delete("/{doc_id}")
 def delete_document(doc_id: str, session: Session = Depends(get_session)):
-    from datetime import datetime, timezone
+    from datetime import timezone
 
     doc = session.get(Knowledge, doc_id)
     if not doc:
@@ -278,3 +317,98 @@ def delete_document(doc_id: str, session: Session = Depends(get_session)):
     doc.deleted_at = datetime.now(timezone.utc)
     session.commit()
     return {"status": "deleted"}
+
+
+@router.get("/{doc_id}/chunks")
+def list_chunks(
+    doc_id: str,
+    page: int = 1,
+    size: int = 20,
+    chunk_type: str | None = None,
+    session: Session = Depends(get_session),
+):
+    from sqlalchemy import case, func
+    from sqlalchemy.orm import aliased
+    from ...models.chunk import Chunk
+
+    doc = session.get(Knowledge, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    Parent = aliased(Chunk)
+    group_start = func.coalesce(Parent.start_at, Chunk.start_at, 0)
+    is_parent = case((Chunk.parent_chunk_id.is_(None), 0), else_=1)
+
+    query = (
+        session.query(Chunk)
+        .outerjoin(Parent, Chunk.parent_chunk_id == Parent.id)
+        .filter(Chunk.knowledge_id == doc_id, Chunk.deleted_at.is_(None))
+    )
+    if chunk_type:
+        query = query.filter(Chunk.chunk_type == chunk_type)
+
+    total = query.count()
+    items = (
+        query.order_by(group_start, is_parent, Chunk.start_at)
+        .offset((page - 1) * size)
+        .limit(size)
+        .all()
+    )
+
+    # 子块 start_at/end_at 是相对父块的偏移，转换为文档绝对偏移以配合 /content 坐标系
+    parent_ids = {c.parent_chunk_id for c in items if c.parent_chunk_id}
+    parent_starts: dict[str, int] = {}
+    if parent_ids:
+        parents = session.query(Chunk.id, Chunk.start_at).filter(Chunk.id.in_(parent_ids)).all()
+        parent_starts = {pid: (s or 0) for pid, s in parents}
+
+    result = []
+    for c in items:
+        r = ChunkResponse.model_validate(c)
+        if c.parent_chunk_id and c.parent_chunk_id in parent_starts:
+            base = parent_starts[c.parent_chunk_id]
+            r.start_at = base + (c.start_at or 0)
+            r.end_at = base + (c.end_at or 0)
+        result.append(r)
+
+    return {
+        "items": result,
+        "total": total,
+        "page": page,
+        "size": size,
+    }
+
+
+@router.get("/{doc_id}/content")
+def get_document_content(doc_id: str, session: Session = Depends(get_session)):
+    from ...models.chunk import Chunk
+
+    doc = session.get(Knowledge, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    def _load(chunk_type: str):
+        return (
+            session.query(Chunk)
+            .filter(
+                Chunk.knowledge_id == doc_id,
+                Chunk.chunk_type == chunk_type,
+                Chunk.deleted_at.is_(None),
+                Chunk.start_at.is_not(None),
+            )
+            .order_by(Chunk.start_at)
+            .all()
+        )
+
+    chunks = _load("parent_text") or _load("text")
+    if not chunks:
+        return {"doc_id": doc_id, "content": "", "length": 0}
+
+    # 用切块偏移重建解析后文本，保持与 chunk.start_at/end_at 同一坐标系
+    end_max = max(c.end_at or 0 for c in chunks)
+    buf = ["\n"] * end_max
+    for c in chunks:
+        text = c.content[: (c.end_at or 0) - (c.start_at or 0)]
+        buf[c.start_at : c.start_at + len(text)] = list(text)
+    content = "".join(buf)
+    return {"doc_id": doc_id, "content": content, "length": len(content)}

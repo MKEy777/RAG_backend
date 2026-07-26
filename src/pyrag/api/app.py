@@ -12,7 +12,7 @@ from ..logging import get_logger, get_trace_id, new_trace_id, setup_logging, tra
 from ..models.database import init_db
 from ..settings import settings
 from .middleware import RateLimitMiddleware
-from .routers import chat, documents, knowledge_bases, retrieval
+from .routers import chat, documents, graph, knowledge_bases, retrieval, wiki
 
 setup_logging()
 log = get_logger("api")
@@ -31,7 +31,7 @@ class TraceMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
         duration_ms = (time.perf_counter() - start) * 1000
         response.headers["X-Trace-Id"] = tid
-        print(f"[REQUEST] {request.method} {request.url.path} -> {response.status_code} ({duration_ms:.0f}ms)", flush=True)
+        log.info("request", method=request.method, path=request.url.path, status=response.status_code, duration_ms=round(duration_ms))
         return response
 
 
@@ -41,6 +41,8 @@ app.include_router(knowledge_bases.router, prefix="/api/v1/knowledge-bases", tag
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
 app.include_router(retrieval.router, prefix="/api/v1/retrieval", tags=["retrieval"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
+app.include_router(wiki.router, prefix="/api/v1/wiki", tags=["wiki"])
+app.include_router(graph.router, prefix="/api/v1/graph", tags=["graph"])
 
 
 @app.exception_handler(RequestValidationError)

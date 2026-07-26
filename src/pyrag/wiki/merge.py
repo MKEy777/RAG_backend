@@ -174,6 +174,7 @@ async def _merge_content(existing: str, new_info: str, title: str, slug: str) ->
                 ],
                 temperature=0.3,
                 max_tokens=4096,
+                purpose="wiki:merge",
             )
 
         resp = await _call()

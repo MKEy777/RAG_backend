@@ -6,7 +6,7 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 
-from ..logging import get_logger
+from ..logging import bind_kb, get_logger
 from ..llm.client import get_llm_client
 from ..llm.json_repair import parse_json_array
 from ..llm.retry import graph_llm_retry
@@ -64,11 +64,12 @@ class GraphBuilder:
                     async def _call():
                         return await client.chat(
                             [
-                                {"role": "system", "content": EXTRACT_ENTITIES_PROMPT},
-                                {"role": "user", "content": text},
+                                {"role": "system", "content": ENTITY_EXTRACTION_PROMPT},
+                                {"role": "user", "content": source_text},
                             ],
-                            temperature=0.0,
+                            temperature=0.3,
                             max_tokens=2048,
+                            purpose="graph:extract_entities",
                         )
 
                     resp = await _call()
@@ -151,6 +152,7 @@ class GraphBuilder:
                             ],
                             temperature=0.0,
                             max_tokens=2048,
+                            purpose="graph:extract_relations",
                         )
 
                     resp = await _call()
@@ -202,6 +204,7 @@ class GraphManager:
     async def build_document(
         self, kb_id: str, knowledge_id: str, chunks: list[dict]
     ) -> None:
+        bind_kb(kb_id, doc_id=knowledge_id)
         log.info("图管理器构建文档", kb_id=kb_id, knowledge_id=knowledge_id, chunk_count=len(chunks))
         self._delete_document_entities(kb_id, knowledge_id)
         entity_map, relations = await self._builder.build(kb_id, knowledge_id, chunks)

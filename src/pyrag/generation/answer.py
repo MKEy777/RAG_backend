@@ -72,7 +72,7 @@ async def generate_answer(
 
     client = get_llm_client()
     try:
-        answer = await client.chat(messages)
+        answer = await client.chat(messages, purpose="qa:answer")
     except Exception:
         answer = NO_ANSWER_MSG
 

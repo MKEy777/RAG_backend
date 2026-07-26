@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 from ..llm.client import get_llm_client
 from ..llm.json_repair import parse_json_array, parse_json_object
 from ..llm.retry import wiki_llm_retry
+from ..logging import bind_kb
 from ..models.chunk import Chunk
+from ..models.knowledge import Knowledge
+from ..models.knowledge_base import KnowledgeBase
 from ..settings import settings
 
 WIKI_SUMMARY_PROMPT = (
@@ -47,6 +50,9 @@ class MapResult:
 
 
 async def map_document(session: Session, knowledge_id: str, kb_id: str) -> MapResult | None:
+    kb = session.get(KnowledgeBase, kb_id)
+    doc = session.get(Knowledge, knowledge_id)
+    bind_kb(kb_id, doc_id=knowledge_id, kb_name=kb.name if kb else "", filename=doc.file_name if doc else "")
     stmt = (
         select(Chunk)
         .where(
@@ -61,6 +67,17 @@ async def map_document(session: Session, knowledge_id: str, kb_id: str) -> MapRe
         return None
 
     source_text = "\n".join(c.content for c in chunks)
+    if not source_text.strip():
+        return None
+    chunk_dicts = [{"id": c.id, "content": c.content[:500]} for c in chunks]
+    return await map_from_text(source_text, chunk_dicts, kb_id, knowledge_id)
+
+
+async def map_from_text(
+    source_text: str, chunk_dicts: list[dict], kb_id: str, knowledge_id: str
+) -> MapResult | None:
+    """LLM-only map phase, safe for concurrent execution (no DB access)."""
+    bind_kb(kb_id, doc_id=knowledge_id)
     if not source_text.strip():
         return None
     if len(source_text) > settings.wiki_max_source_chars:
@@ -78,7 +95,6 @@ async def map_document(session: Session, knowledge_id: str, kb_id: str) -> MapRe
     result.candidates = candidates
 
     if candidates:
-        chunk_dicts = [{"id": c.id, "content": c.content[:500]} for c in chunks]
         result.citations = await _map_citations(client, candidates, chunk_dicts)
 
     return result
@@ -87,13 +103,14 @@ async def map_document(session: Session, knowledge_id: str, kb_id: str) -> MapRe
 async def _generate_summary(client, source_text: str) -> dict:
     @wiki_llm_retry()
     async def _call():
-        return await client.chat(
+            return await client.chat(
             [
                 {"role": "system", "content": WIKI_SUMMARY_PROMPT},
                 {"role": "user", "content": source_text},
             ],
             temperature=0.3,
             max_tokens=4096,
+            purpose="wiki:summarize",
         )
 
     try:
@@ -119,6 +136,7 @@ async def _extract_candidates(client, source_text: str) -> list[dict]:
             ],
             temperature=0.0,
             max_tokens=4096,
+            purpose="wiki:extract_candidates",
         )
 
     try:
@@ -180,6 +198,7 @@ async def _map_citations(
                         ],
                         temperature=0.0,
                         max_tokens=2048,
+                        purpose="wiki:citation",
                     )
 
                 resp = await _call()

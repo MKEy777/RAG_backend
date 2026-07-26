@@ -89,6 +89,7 @@ async def _rebuild_index_page(session: Session, kb_id: str, tenant_id: int) -> N
                 [{"role": "system", "content": prompt}, {"role": "user", "content": user_msg}],
                 temperature=0.3,
                 max_tokens=1024,
+                purpose="wiki:generate_intro",
             )
 
         intro = await _call()
@@ -143,6 +144,7 @@ async def _assign_taxonomy(session: Session, kb_id: str) -> None:
                 [{"role": "system", "content": WIKI_TAXONOMY_PROMPT}, {"role": "user", "content": user_msg}],
                 temperature=0.0,
                 max_tokens=2048,
+                purpose="wiki:classify",
             )
 
         resp = await _call()

@@ -16,7 +16,7 @@ async def extract_query_entities(query: str) -> list[str]:
     )
     try:
         resp = await client.chat(
-            [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=256
+            [{"role": "user", "content": prompt}], temperature=0.0, max_tokens=256, purpose="retrieval:extract_entities"
         )
         entities = parse_json_array(resp)
         return [str(e) for e in entities if e]
