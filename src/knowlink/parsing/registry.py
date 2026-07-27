@@ -38,7 +38,7 @@ def detect_format(data: bytes, filename: str) -> str:
         return "pdf"
     if data[:4] == ZIP_MAGIC:
         ext = Path(filename).suffix.lower().lstrip(".")
-        if ext in ("docx", "pptx", "xlsx"):
+        if ext in ("docx", "pptx", "xlsx", "xlsb", "ods"):
             return ext
         return "zip"
     ext = Path(filename).suffix.lower().lstrip(".")

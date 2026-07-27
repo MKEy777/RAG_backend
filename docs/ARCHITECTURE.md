@@ -315,6 +315,7 @@ class GraphStore(Protocol):
 | 2026-07-26 | Celery 分 ingest/enrich 双队列（解析入库 vs 图谱/Wiki 增强），worker 默认 -Q ingest,enrich；task soft_time_limit 300→1500/hard 600→1800；解析任务重试改指数退避 5s×2^n | tasks/{celery_app,parse_tasks}.py、scripts/run_worker.py |
 | 2026-07-26 | 新增解析格式：独立图片文件（jpg/jpeg/png/webp/bmp/gif → VLM OCR 管线）、html/htm/epub/mhtml/csv（markitdown 直转）；allowed_extensions 同步扩充 | parsing/{image_parser,html_parser}.py、settings.py |
 | 2026-07-26 | WeKnora 对标 P0-P3：chat 接入共享检索管线（FAQ 分流/图谱通道/多 KB 并发/多轮改写/低召回扩展/内容签名去重）；流式 error 事件化 + 建议问题；rerank 复合分；表头跨块注入；VLM 重试/缓存；Chunk 编辑删除；FAQ 批量/导出；Wiki 页面编辑+文件夹；URL 入库；分块预览；检索评估脚本 | retrieval/*、generation/*、api/routers/*、chunking/table_header.py、parsing/*、scripts/evaluate_retrieval.py、前端对应模块 |
+| 2026-07-27 | 解析模块细节增强：PDF 多栏 XY-cut 检测、隐藏文本过滤、伪影字符清理、孤立标点合并、图表碎片增强、Figure 图注感知裁剪、渲染尺度限制、pdfium 线程安全锁、环境变量化配置（KNOWLINK_PDF_*）、强制扫描模式、解析元数据输出；DOCX 表格 colspan、小图过滤/大图缩放、LibreOffice 3次重试+Profile 隔离；PPTX ImageMagick WMF/EMF 光栅化回退；新增 ODS/XLSB 格式支持；Markdown 表格虚假前缀行规范化；ParseResult 新增 metadata 字段 | parsing/{pdf_parser,docx_parser,pptx_parser,excel_parser,text_parser,base,registry}.py、settings.py |
 
 ---
 

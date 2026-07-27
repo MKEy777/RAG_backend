@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     # security
     max_upload_size_mb: int = 100
     allowed_extensions: list[str] = [
-        ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".md", ".txt", ".csv", ".zip",
+        ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".xlsb", ".ods", ".pptx", ".ppt", ".md", ".txt", ".csv", ".zip",
         ".html", ".htm", ".epub", ".mhtml",
         ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif",
     ]
