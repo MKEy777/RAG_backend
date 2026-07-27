@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Integer, JSON, String, Text
+from sqlalchemy import BigInteger, Boolean, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, SoftDeleteMixin, TimestampMixin, _uuid
@@ -25,3 +25,4 @@ class Chunk(Base, TimestampMixin, SoftDeleteMixin):
     image_info: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")

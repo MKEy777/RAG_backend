@@ -31,6 +31,7 @@ async def hybrid_search(
     top_k: int | None = None,
     vector_threshold: float | None = None,
     keyword_threshold: float | None = None,
+    mode: str = "hybrid",
 ) -> tuple[list[Candidate], list[Candidate]]:
     top_k = top_k or settings.embedding_top_k
     vector_threshold = vector_threshold if vector_threshold is not None else settings.vector_threshold
@@ -41,19 +42,33 @@ async def hybrid_search(
     vector_candidates: list[Candidate] = []
     keyword_candidates: list[Candidate] = []
 
-    kw_task = storage.keyword.search(kb_id, query, top_k, keyword_threshold)
+    # vector 模式仅在嵌入可用时跳过关键词通道；嵌入失败仍降级 BM25（agents.md §六）
+    use_keyword = not (mode == "vector" and query_vector is not None)
+    use_vector = mode != "fulltext" and query_vector is not None
 
-    if query_vector is not None:
+    kw_task = storage.keyword.search(kb_id, query, top_k, keyword_threshold) if use_keyword else None
+
+    if use_vector:
         vec_task = storage.vector.search(kb_id, query_vector, top_k, vector_threshold)
-        try:
-            vec_results, kw_results = await asyncio.gather(vec_task, kw_task)
-        except Exception as e:
-            log.warning("向量搜索失败_回退BM25", kb_id=kb_id, error=str(e))
-            kw_results = await kw_task
-            vec_results = []
+        if kw_task is not None:
+            try:
+                vec_results, kw_results = await asyncio.gather(vec_task, kw_task)
+            except Exception as e:
+                log.warning("向量搜索失败_回退BM25", kb_id=kb_id, error=str(e))
+                kw_results = await storage.keyword.search(kb_id, query, top_k, keyword_threshold)
+                vec_results = []
+        else:
+            try:
+                vec_results = await vec_task
+                kw_results = []
+            except Exception as e:
+                log.warning("向量搜索失败_回退BM25", kb_id=kb_id, error=str(e))
+                kw_results = await storage.keyword.search(kb_id, query, top_k, keyword_threshold)
+                vec_results = []
     else:
-        log.info("嵌入服务不可用_仅BM25", kb_id=kb_id)
-        kw_results = await kw_task
+        if mode != "fulltext":
+            log.info("嵌入服务不可用_仅BM25", kb_id=kb_id)
+        kw_results = await kw_task if kw_task is not None else []
         vec_results = []
 
     vector_candidates = [

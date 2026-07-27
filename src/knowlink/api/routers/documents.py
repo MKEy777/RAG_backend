@@ -65,10 +65,12 @@ def _run_parse_sync(knowledge_id: str, kb_id: str, tenant_id: int, file_data: by
 
         session = SessionLocal()
         try:
-            kb = session.get(Knowledge, knowledge_id)
-            chunking_config = {}
-            if kb and kb.metadata_:
-                chunking_config = kb.metadata_.get("chunking_config", {})
+            doc = session.get(Knowledge, knowledge_id)
+            kb_row = session.get(KnowledgeBase, kb_id)
+            doc_meta = (doc.metadata_ or {}) if doc else {}
+            # 文档级 > KB 级（agents.md：KB 列 chunking_config/image_processing_config 的读取点）
+            chunking_config = doc_meta.get("chunking_config") or (kb_row.chunking_config if kb_row else {}) or {}
+            parse_config = doc_meta.get("parse_config") or (kb_row.image_processing_config if kb_row else None) or {}
         finally:
             session.close()
 
@@ -98,7 +100,7 @@ def _run_parse_sync(knowledge_id: str, kb_id: str, tenant_id: int, file_data: by
         # VLM 图片处理（耗时操作，不阻塞文本检索）
         if result.images:
             _update_progress(knowledge_id, "vlm", 70)
-            full_markdown = asyncio.run(enrich_markdown_with_images(result.markdown, result.images))
+            full_markdown = asyncio.run(enrich_markdown_with_images(result.markdown, result.images, parse_config=parse_config))
             if len(full_markdown) > len(result.markdown):
                 session = SessionLocal()
                 try:
@@ -275,6 +277,10 @@ class DocResponse(BaseModel):
     graph_status: str | None = None
     wiki_status: str | None = None
     error_message: str | None = None
+    tags: list | None = None
+    uploaded_by: str | None = None
+    authority: int = 0
+    wiki_enabled: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -289,6 +295,7 @@ class ChunkResponse(BaseModel):
     parent_chunk_id: str | None
     start_at: int | None
     end_at: int | None
+    enabled: bool = True
     created_at: datetime | None
 
     class Config:
@@ -300,6 +307,10 @@ async def upload_document(
     kb_id: str,
     file: UploadFile = File(...),
     display_name: str | None = Form(None),
+    tags: str | None = Form(None),
+    uploaded_by: str | None = Form(None),
+    parse_config: str | None = Form(None),
+    chunking_config: str | None = Form(None),
     base_dir: str | None = None,
     session: Session = Depends(get_session),
 ):
@@ -307,6 +318,31 @@ async def upload_document(
     kb = session.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(404, "Knowledge base not found")
+
+    import json as _json
+
+    def _parse_json_form(raw: str | None, name: str) -> dict | None:
+        if not raw:
+            return None
+        try:
+            parsed = _json.loads(raw)
+        except ValueError:
+            raise HTTPException(422, f"{name} 必须是合法 JSON 对象")
+        if not isinstance(parsed, dict):
+            raise HTTPException(422, f"{name} 必须是合法 JSON 对象")
+        return parsed
+
+    parse_cfg = _parse_json_form(parse_config, "parse_config")
+    chunking_cfg = _parse_json_form(chunking_config, "chunking_config")
+
+    tag_list: list | None = None
+    if tags:
+        try:
+            parsed = _json.loads(tags)
+            if isinstance(parsed, list):
+                tag_list = [str(t) for t in parsed if str(t).strip()]
+        except ValueError:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
 
     filename = file.filename or "untitled"
     ext = Path(filename).suffix.lower()
@@ -346,6 +382,10 @@ async def upload_document(
     meta: dict = {"original_key": original_key, "original_filename": filename}
     if needs_images:
         meta["needs_images"] = True
+    if parse_cfg:
+        meta["parse_config"] = parse_cfg
+    if chunking_cfg:
+        meta["chunking_config"] = chunking_cfg
 
     doc = Knowledge(
         id=doc_id,
@@ -359,6 +399,8 @@ async def upload_document(
         file_hash=file_hash,
         source="upload",
         parse_status="processing",
+        tags=tag_list,
+        uploaded_by=uploaded_by or "admin",
         metadata_=meta,
     )
     session.add(doc)
@@ -385,6 +427,8 @@ async def upload_document(
         file_name=doc.file_name,
         parse_status=doc.parse_status,
         needs_images=needs_images,
+        tags=doc.tags,
+        uploaded_by=doc.uploaded_by,
     )
 
 
@@ -495,6 +539,7 @@ def import_local_document(
         file_hash=file_hash,
         source="local_import",
         parse_status="processing",
+        uploaded_by="admin",
     )
     session.add(doc)
     session.commit()
@@ -535,6 +580,7 @@ class ChunkPreviewBody(BaseModel):
     chunk_size: int | None = None
     chunk_overlap: int | None = None
     enable_parent_child: bool = True
+    separators: list[str] | None = None
 
 
 @router.post("/chunk-preview")
@@ -545,6 +591,7 @@ def chunk_preview(body: ChunkPreviewBody):
     result = chunk_document(
         body.text, strategy=body.strategy, chunk_size=body.chunk_size,
         overlap=body.chunk_overlap, enable_parent_child=body.enable_parent_child,
+        separators=body.separators,
     )
     if result and isinstance(result[0], ParentChildPair):
         return {"mode": "parent_child", "parents": [
@@ -607,6 +654,7 @@ async def import_url_document(body: ImportUrlBody, session: Session = Depends(ge
         id=doc_id, tenant_id=kb.tenant_id, knowledge_base_id=body.kb_id, type="file",
         title=filename, file_name=filename, file_type=resp.headers.get("content-type", ""),
         file_size=len(data), file_hash=file_hash, source="url", parse_status="processing",
+        uploaded_by="admin",
         metadata_={"original_key": original_key, "source_url": body.url},
     )
     session.add(doc)
@@ -620,12 +668,46 @@ def list_documents(
     kb_id: str,
     page: int = 1,
     size: int = 20,
+    keyword: str | None = None,
+    status: str | None = None,
+    tag: str | None = None,
+    file_type: str | None = None,
+    sort_by: str = "created_at",
+    order: str = "desc",
     session: Session = Depends(get_session),
 ):
+    from sqlalchemy import cast, String as SAString
+
     query = (
         session.query(Knowledge)
         .filter(Knowledge.knowledge_base_id == kb_id, Knowledge.deleted_at.is_(None))
     )
+    if keyword:
+        pattern = f"%{keyword}%"
+        query = query.filter(Knowledge.title.ilike(pattern) | Knowledge.file_name.ilike(pattern))
+    if status:
+        query = query.filter(Knowledge.parse_status == status)
+    if file_type:
+        query = query.filter(Knowledge.file_type.ilike(f"%{file_type}%"))
+    if tag:
+        import json as _json
+
+        # SQLAlchemy JSON 默认 ensure_ascii，中文标签落库为 \uXXXX 转义；两种形态都匹配
+        escaped = _json.dumps(tag)[1:-1]
+        col = cast(Knowledge.tags, SAString)
+        cond = col.like(f'%"{tag}"%')
+        if escaped != tag:
+            cond = cond | col.like(f'%"{escaped}"%')
+        query = query.filter(cond)
+
+    sort_col = {
+        "created_at": Knowledge.created_at,
+        "updated_at": Knowledge.updated_at,
+        "title": Knowledge.title,
+        "file_size": Knowledge.file_size,
+    }.get(sort_by, Knowledge.created_at)
+    query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+
     total = query.count()
     items = query.offset((page - 1) * size).limit(size).all()
     return {
@@ -713,20 +795,35 @@ def get_document_status(doc_id: str, session: Session = Depends(get_session)):
     }
 
 
-class DocRename(BaseModel):
-    title: str
+class DocUpdate(BaseModel):
+    title: str | None = None
+    tags: list[str] | None = None
+    authority: int | None = None
+    uploaded_by: str | None = None
+    wiki_enabled: bool | None = None
 
 
 @router.patch("/{doc_id}", response_model=DocResponse)
-def rename_document(doc_id: str, body: DocRename, session: Session = Depends(get_session)):
+def update_document(doc_id: str, body: DocUpdate, session: Session = Depends(get_session)):
     doc = session.get(Knowledge, doc_id)
     if not doc:
         raise HTTPException(404, "Document not found")
-    name = body.title.strip()
-    if not name:
-        raise HTTPException(422, "名称不能为空")
-    doc.title = name
-    doc.file_name = name
+    if body.title is not None:
+        name = body.title.strip()
+        if not name:
+            raise HTTPException(422, "名称不能为空")
+        doc.title = name
+        doc.file_name = name
+    if body.tags is not None:
+        doc.tags = [t.strip() for t in body.tags if t.strip()]
+    if body.authority is not None:
+        if body.authority not in (0, 1):
+            raise HTTPException(422, "authority 仅支持 0/1")
+        doc.authority = body.authority
+    if body.uploaded_by is not None:
+        doc.uploaded_by = body.uploaded_by
+    if body.wiki_enabled is not None:
+        doc.metadata_ = {**(doc.metadata_ or {}), "wiki_enabled": body.wiki_enabled}
     session.commit()
     session.refresh(doc)
     return doc
@@ -901,12 +998,26 @@ def list_chunks(
 
 
 class ChunkUpdateBody(BaseModel):
-    content: str
+    content: str | None = None
+    enabled: bool | None = None
+
+
+async def _reindex_chunk(chunk) -> None:
+    from ...indexing.embedder import build_embed_content, embed_texts
+    from ...storage.factory import get_storage
+
+    meta = chunk.metadata_ or {}
+    embed_content = build_embed_content(meta.get("doc_title", ""), meta.get("title_path", []), chunk.content)
+    storage = get_storage()
+    vectors = await embed_texts([embed_content])
+    idx_meta = [{"knowledge_id": chunk.knowledge_id, "chunk_type": chunk.chunk_type, "doc_title": meta.get("doc_title", "")}]
+    await storage.vector.upsert(chunk.knowledge_base_id, [chunk.id], vectors, idx_meta)
+    await storage.keyword.index_chunks(chunk.knowledge_base_id, [chunk.id], [embed_content], idx_meta)
 
 
 @router.put("/{doc_id}/chunks/{chunk_id}")
 async def update_chunk(doc_id: str, chunk_id: str, body: ChunkUpdateBody, session: Session = Depends(get_session)):
-    from ...indexing.embedder import build_embed_content, content_hash, embed_texts
+    from ...indexing.embedder import content_hash
     from ...models.chunk import Chunk
     from ...storage.factory import get_storage
 
@@ -914,20 +1025,30 @@ async def update_chunk(doc_id: str, chunk_id: str, body: ChunkUpdateBody, sessio
     if not chunk or chunk.knowledge_id != doc_id or chunk.deleted_at is not None:
         raise HTTPException(404, "Chunk not found")
 
-    chunk.content = body.content
-    chunk.content_hash = content_hash(body.content)
+    if body.content is not None:
+        chunk.content = body.content
+        chunk.content_hash = content_hash(body.content)
+
+    toggled = body.enabled is not None and body.enabled != chunk.enabled
+    if body.enabled is not None:
+        chunk.enabled = body.enabled
     session.commit()
 
-    if chunk.chunk_type != "parent_text":
-        meta = chunk.metadata_ or {}
-        embed_content = build_embed_content(meta.get("doc_title", ""), meta.get("title_path", []), body.content)
-        storage = get_storage()
-        vectors = await embed_texts([embed_content])
-        idx_meta = [{"knowledge_id": chunk.knowledge_id, "chunk_type": chunk.chunk_type, "doc_title": meta.get("doc_title", "")}]
-        await storage.vector.upsert(chunk.knowledge_base_id, [chunk_id], vectors, idx_meta)
-        await storage.keyword.index_chunks(chunk.knowledge_base_id, [chunk_id], [embed_content], idx_meta)
-    log.info("切块更新", chunk_id=chunk_id, doc_id=doc_id)
-    return {"status": "updated"}
+    if chunk.chunk_type == "parent_text":
+        return {"status": "updated", "enabled": chunk.enabled}
+
+    if not chunk.enabled:
+        if toggled:
+            storage = get_storage()
+            await storage.vector.delete_chunks(chunk.knowledge_base_id, [chunk_id])
+            await storage.keyword.delete_chunks(chunk.knowledge_base_id, [chunk_id])
+            log.info("切块禁用_索引已移除", chunk_id=chunk_id, doc_id=doc_id)
+        return {"status": "updated", "enabled": False}
+
+    if body.content is not None or toggled:
+        await _reindex_chunk(chunk)
+    log.info("切块更新", chunk_id=chunk_id, doc_id=doc_id, enabled=chunk.enabled)
+    return {"status": "updated", "enabled": chunk.enabled}
 
 
 @router.delete("/{doc_id}/chunks/{chunk_id}")

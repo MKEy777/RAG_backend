@@ -22,8 +22,10 @@ def test_request_defaults_are_none_or_enabled():
     body = r.RetrievalRequest(kb_ids=["kb1"], query="q")
     assert body.recall_top_k is None
     assert body.rrf_k is None
-    assert body.enable_rerank is True
-    assert body.expand_parent is True
+    # 开关默认 None：未显式传参时由 pipeline 三层解析（KB 配置 > 默认）决定
+    assert body.enable_rerank is None
+    assert body.expand_parent is None
+    assert body.search_mode is None
 
 
 def test_request_rejects_out_of_bounds():
@@ -44,7 +46,7 @@ async def test_route_passes_overrides_through(db_session, monkeypatch):
     async def fake_embed(texts):
         return np.zeros((1, 4), dtype=np.float32)
 
-    async def fake_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None):
+    async def fake_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None, mode="hybrid"):
         captured["hybrid"] = (top_k, vector_threshold, keyword_threshold)
         return [], []
 
@@ -92,7 +94,7 @@ async def test_route_skips_rerank_and_expand_when_disabled(db_session, monkeypat
     async def fake_embed(texts):
         return np.zeros((1, 4), dtype=np.float32)
 
-    async def fake_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None):
+    async def fake_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None, mode="hybrid"):
         return [], []
 
     def fake_fusion(vec, kw, k=None, vector_weight=None, keyword_weight=None):

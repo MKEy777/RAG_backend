@@ -74,9 +74,16 @@ async def process_image_cascade(
     return result
 
 
-async def enrich_markdown_with_images(markdown: str, images: list[ImageRef]) -> str:
+async def enrich_markdown_with_images(markdown: str, images: list[ImageRef], parse_config: dict | None = None) -> str:
     """Run VLM OCR on images and replace ![alt](images/{id}.*) placeholders in-place."""
     if not images:
+        return markdown
+
+    cfg = parse_config or {}
+    use_ocr = cfg.get("use_ocr", True)
+    use_vlm = cfg.get("use_vlm", True)
+    if not use_ocr and not use_vlm:
+        logger.info("[VLM] 解析配置关闭 OCR/VLM，跳过图片提取: images=%d", len(images))
         return markdown
 
     logger.info("[VLM] 开始图片提取: images=%d", len(images))
@@ -85,7 +92,7 @@ async def enrich_markdown_with_images(markdown: str, images: list[ImageRef]) -> 
     async def _process(i: int, img: ImageRef) -> tuple[int, str]:
         async with sem:
             try:
-                res = await process_image_cascade(img)
+                res = await process_image_cascade(img, use_ocr=use_ocr, use_vlm=use_vlm)
                 content = res["ocr_text"] or res["caption"]
                 if content:
                     logger.info("[VLM] 图片 %d/%d 提取成功: %d chars", i + 1, len(images), len(content))

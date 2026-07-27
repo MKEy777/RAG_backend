@@ -45,6 +45,8 @@ def run_wiki_build(session: Session, kb_id: str, enqueue_missing: bool = False) 
             .all()
         )
         for doc in docs:
+            if not doc.wiki_enabled:
+                continue
             enqueue_ingest(session, kb_id, doc.id)
 
     session.query(WikiPendingOperation).filter(
@@ -116,6 +118,9 @@ async def _wiki_build_async(
     doc_data: list[tuple] = []
     for op in ingest_ops:
         doc = session.get(Knowledge, op.document_id)
+        if doc is not None and not doc.wiki_enabled:
+            mark_completed(session, op)
+            continue
         doc_title = (doc.title or doc.file_name or op.document_id) if doc else op.document_id
         chunks = session.execute(
             select(Chunk)

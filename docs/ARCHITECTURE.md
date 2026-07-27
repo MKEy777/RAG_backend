@@ -88,7 +88,7 @@ knowlink/
 - validator 回退条件：0 块 / 大文档只产 1 块 / 小块（<50 字符）>1/4 且 >2 个 / 最大块 < chunkSize/4 / 任一块 > 2×chunkSize
 - 6 组保护正则占位符法（代码块 / `$$` 公式 / 图片 / 链接 / 表格），保护块上限 7500 字符
 - 父子分块：parent 4096 / child 384 / child overlap = 384//5
-- 默认 chunk size 512 / overlap 80；分隔符优先级 `["\n\n", "\n", "。"]`
+- 默认 chunk size 512 / overlap 80；分隔符优先级 `["\n\n", "\n", "。"]`，可按文档/KB 级 `chunking_config.separators` 自定义（文档级 > KB 级 > settings）
 - 移植来源：`../WeKnora/internal/infrastructure/chunker/`
 
 ### 4.3 嵌入与索引（indexing/）
@@ -98,7 +98,7 @@ knowlink/
 - **批处理**：嵌入批 5，索引批 40 并发 5
 - **重试**：5 次指数退避，200ms 起
 - **幂等序列**：软删旧 chunks → 删向量 → 删关键词 → 删图谱 → 写新 chunks → 嵌入子块 → 写索引 → 更新 `parse_status` → 投递 faq/wiki/graph 任务
-- **图片级联**（image_pipeline.py）：OCR 优先 → VLM 兜底，按内容自然取舍（文字图走 OCR、语义图走描述）
+- **图片级联**（image_pipeline.py）：OCR 优先 → VLM 兜底，按内容自然取舍（文字图走 OCR、语义图走描述）；`use_ocr`/`use_vlm` 可按文件 `parse_config` 或 KB 级 `image_processing_config` 关闭（文档级 > KB 级 > 默认全开）
 
 ### 4.4 检索（retrieval/）
 
@@ -108,6 +108,10 @@ knowlink/
 - **重排序**：rerank TopK=10，threshold=0.2；阈值降级（无结果时降到 0.7×原阈值，下限 0.3）
 - **Wiki 加权**：rerank 后对所有 `wiki_page` 切块 ×1.3
 - **API 参数覆写**：`/api/v1/retrieval` 支持按请求覆写检索参数（recall_top_k / vector_threshold / keyword_threshold / rrf_k / vector_weight / keyword_weight / enable_rerank / rerank_threshold / wiki_boost / expand_parent），缺省回落 settings 默认值（detail.md §混合检索）；enable_rerank=false 时跳过精排直接取融合序，expand_parent=false 时跳过父块扩展
+- **KB 级检索配置持久化（迁移 0005）**：`knowledge_base.retrieval_config`（JSON 可空）持久化 search_mode / top_k / recall_top_k / vector_weight / keyword_weight / vector_threshold / keyword_threshold / rrf_k / enable_rerank / rerank_threshold / enable_graph / enable_wiki_boost / wiki_boost / expand_parent。**三层解析顺序：请求参数 > kb.retrieval_config > settings/端点默认**（`pipeline.py::_resolve_config`）；多 KB 查询取首个非空配置；NULL 时行为与旧版完全一致
+- **search_mode 三选一**：`hybrid`（默认，向量+BM25+RRF）/ `vector`（仅向量通道，嵌入不可用时降级 BM25）/ `fulltext`（仅 BM25）；单通道时 RRF 退化为单列表直通；vector 模式跳过低召回关键词扩展
+- **权威加权**：rerank 后对 `knowledge.authority=1` 的文档切块 ×authority_boost（默认 1.2）
+- **命中测试历史**：`retrieval_tests` 表记录每次 `/api/v1/retrieval` 调用（query/params_snapshot/hit_count/top_score/duration_ms），`GET /retrieval/history` 分页查询、`DELETE /retrieval/history/{id}` 删除；写入失败不阻断检索
 - **FAQ**：独立索引，迭代检索 ≤5 轮，起始 TopK=matchCount×3，按标签优先级排序
 - **图谱增强**：查询实体抽取 → 图谱找相关 chunk → 并入候选去重（一跳 + 两跳，衰减 0.5）
 - **返回结构**：`Candidate` 必须保留 chunk_id / score / 来源通道 / chunk_type / 标题路径 / document_id，不能过早降级为纯文本
@@ -223,6 +227,26 @@ class GraphStore(Protocol):
 - **图谱**：内存 + JSON 快照
 - **Redis**：嵌入缓存 / 重排缓存 / 会话 / 分布式锁
 
+**元数据扩展列（迁移 0004）**：
+
+| 表 | 列 | 说明 |
+|---|---|---|
+| knowledge_base | `group_name` String(100) 可空、索引 | 分组标签（字符串,不建独立分组表） |
+| knowledge_base | `icon` String(100) 可空 | 图标 emoji/预设 key；`POST /{id}/icon/suggest` 由 LLM 建议 |
+| knowledge | `tags` JSON 可空 | 文档标签数组,列表接口支持 tag 过滤 |
+| knowledge | `uploaded_by` String(100) 可空 | 上传人展示名（无用户体系,默认 "admin"） |
+| knowledge | `authority` Integer default 0 | 文档权威性 0=普通/1=权威；检索 rerank 后 ×authority_boost |
+
+列表接口（KB 与文档）统一支持 `keyword` 搜索、`sort_by`/`order` 排序;KB 列表响应附带 `doc_count`/`total_size`/`chunk_count` 聚合（单次 group by,非 N+1）。
+
+**检索配置与启停扩展（迁移 0005）**：
+
+| 表 | 列 | 说明 |
+|---|---|---|
+| knowledge_base | `retrieval_config` JSON 可空 | KB 级检索配置（见 §4.4 三层解析）,NULL 回落 settings |
+| chunks | `enabled` Boolean default 1 | 切块启停：禁用=物理清向量/BM25 索引（可逆）,区别于 deleted_at 软删（不可逆）;reconcile/图谱存活集/父块展开/FAQ 回填四处同步排除禁用块 |
+| retrieval_tests（新表） | id/tenant_id/kb_ids/query/params_snapshot/hit_count/top_score/duration_ms/created_at | 命中测试历史 |
+
 ## 五、实施
 
 里程碑
@@ -251,6 +275,8 @@ class GraphStore(Protocol):
 | Vector / Keyword 阈值        | 0.15 / 0.3                      | detail.md §混合检索 |
 | RerankTopK / RerankThreshold | 10 / 0.2                        | detail.md §混合检索 |
 | wiki boost                   | ×1.3                           | detail.md §混合检索 |
+| authority boost              | ×1.2                           | 前端产品对齐（文档权威性） |
+| search_mode                  | hybrid                          | 前端产品对齐（检索三选一） |
 | 嵌入重试                     | 5 次，200ms 起指数退避          | detail.md §嵌入     |
 | BATCH_EMBED_SIZE             | 5                               | detail.md §嵌入     |
 | FAQ 迭代检索                 | ≤5 轮，起始 TopK=matchCount×3 | detail.md §FAQ      |
@@ -316,6 +342,9 @@ class GraphStore(Protocol):
 | 2026-07-26 | 新增解析格式：独立图片文件（jpg/jpeg/png/webp/bmp/gif → VLM OCR 管线）、html/htm/epub/mhtml/csv（markitdown 直转）；allowed_extensions 同步扩充 | parsing/{image_parser,html_parser}.py、settings.py |
 | 2026-07-26 | WeKnora 对标 P0-P3：chat 接入共享检索管线（FAQ 分流/图谱通道/多 KB 并发/多轮改写/低召回扩展/内容签名去重）；流式 error 事件化 + 建议问题；rerank 复合分；表头跨块注入；VLM 重试/缓存；Chunk 编辑删除；FAQ 批量/导出；Wiki 页面编辑+文件夹；URL 入库；分块预览；检索评估脚本 | retrieval/*、generation/*、api/routers/*、chunking/table_header.py、parsing/*、scripts/evaluate_retrieval.py、前端对应模块 |
 | 2026-07-27 | 解析模块细节增强：PDF 多栏 XY-cut 检测、隐藏文本过滤、伪影字符清理、孤立标点合并、图表碎片增强、Figure 图注感知裁剪、渲染尺度限制、pdfium 线程安全锁、环境变量化配置（KNOWLINK_PDF_*）、强制扫描模式、解析元数据输出；DOCX 表格 colspan、小图过滤/大图缩放、LibreOffice 3次重试+Profile 隔离；PPTX ImageMagick WMF/EMF 光栅化回退；新增 ODS/XLSB 格式支持；Markdown 表格虚假前缀行规范化；ParseResult 新增 metadata 字段 | parsing/{pdf_parser,docx_parser,pptx_parser,excel_parser,text_parser,base,registry}.py、settings.py |
+| 2026-07-27 | 元数据与列表体验（§4.8 扩展列,迁移 0004）：KB 新增 group_name/icon 列 + 分组列表/搜索/排序/LLM 图标建议接口 + doc_count/total_size/chunk_count 聚合;文档新增 tags/uploaded_by/authority 列 + 列表 keyword/status/tag/file_type 筛选与排序 + 上传/导入/PATCH 暴露对应字段 | models/{knowledge_base,knowledge}.py、api/routers/{knowledge_bases,documents}.py、migrations/0004 |
+| 2026-07-27 | 检索配置持久化+Chunk启停+命中历史（§4.4/§4.8,迁移 0005）：KB.retrieval_config 三层解析（请求>KB>settings）+ search_mode 三选一（hybrid/vector/fulltext,单通道 RRF 退化直通）;Chunk.enabled 启停（禁用物理清索引,reconcile/图谱/父块展开/FAQ 四处贯穿）;retrieval_tests 命中历史表 + history API;authority ×1.2 加权;chat 同步走 KB 配置 | retrieval/{pipeline,hybrid,rerank_stage}.py、api/routers/{retrieval,chat,documents,knowledge_bases}.py、models/{knowledge_base,chunk,retrieval_test}.py、indexing/reconcile.py、generation/context.py、settings.py、migrations/0005 |
+| 2026-07-27 | 解析/分段配置化（零新列,接线已有通路）：上传 API 暴露 parse_config（use_ocr/use_vlm,默认取 kb.image_processing_config,首次读取该列）与 chunking_config（strategy/chunk_size/chunk_overlap/separators,默认取 kb.chunking_config）;enrich_markdown_with_images/process_image_cascade 透传解析开关;recursive 分段支持自定义 separators 并贯通 chunk_document/索引管线/chunk-preview;settings 新增 embedding_models 注册表 + 建库校验 + GET /knowledge-bases/embedding-models;文档级 wiki_enabled（metadata 标志,wiki 组批过滤,PATCH 暴露） | api/routers/{documents,knowledge_bases}.py、indexing/{image_pipeline,pipeline}.py、chunking/__init__.py、tasks/parse_tasks.py、wiki/build.py、models/knowledge.py、settings.py |
 
 ---
 

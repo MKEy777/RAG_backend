@@ -24,7 +24,7 @@ def patched(monkeypatch):
     async def fake_embed(texts):
         return np.ones((len(texts), 4), dtype=np.float32)
 
-    async def fake_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None):
+    async def fake_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None, mode="hybrid"):
         calls["hybrid"].append((kb_id, query))
         return [_cand(f"{kb_id}-v")], [_cand(f"{kb_id}-k", channel="keyword")]
 
@@ -81,7 +81,7 @@ async def test_partial_kb_failure_keeps_other_results(db_session, patched, monke
     db_session.add(_kb("kb-bad"))
     db_session.commit()
 
-    async def flaky_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None):
+    async def flaky_hybrid(kb_id, query, qv, top_k=None, vector_threshold=None, keyword_threshold=None, mode="hybrid"):
         if kb_id == "kb-bad":
             raise RuntimeError("boom")
         return [_cand(f"{kb_id}-v")], [_cand(f"{kb_id}-k", channel="keyword")]
@@ -124,7 +124,8 @@ async def test_chat_includes_faq_and_graph(db_session, monkeypatch):
     from knowlink.retrieval.pipeline import RetrievalResult
 
     async def fake_retrieve(session, kb_ids, query, **kw):
-        assert kw.get("enable_graph") is True
+        assert kw.get("enable_graph") is None
+        assert kw.get("endpoint_defaults", {}).get("enable_graph") is True
         return RetrievalResult(
             hits=[_cand("doc-1", content="正文")],
             faq_hits=[_cand("faq-1", channel="faq", chunk_type="faq", content="Q: q\nA: a")],

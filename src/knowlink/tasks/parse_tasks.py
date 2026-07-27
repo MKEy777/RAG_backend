@@ -60,11 +60,12 @@ def parse_and_index_task(self, knowledge_id: str, kb_id: str, tenant_id: int, fi
         _update_progress(knowledge_id, "chunking", 30)
 
         from ..indexing.pipeline import run_indexing_pipeline
+        from ..models.knowledge_base import KnowledgeBase
 
-        kb = session.get(Knowledge, knowledge_id)
-        chunking_config = {}
-        if kb and kb.metadata_:
-            chunking_config = kb.metadata_.get("chunking_config", {})
+        doc = session.get(Knowledge, knowledge_id)
+        kb_row = session.get(KnowledgeBase, kb_id)
+        doc_meta = (doc.metadata_ or {}) if doc else {}
+        chunking_config = doc_meta.get("chunking_config") or (kb_row.chunking_config if kb_row else {}) or {}
 
         _update_progress(knowledge_id, "embedding", 50)
         asyncio.run(

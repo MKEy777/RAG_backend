@@ -4,6 +4,7 @@ from .knowledge_base import KnowledgeBase
 from .knowledge import Knowledge
 from .artifact import Artifact
 from .chunk import Chunk
+from .retrieval_test import RetrievalTest
 from .wiki import (
     WikiPendingOperation,
     WikiDeadLetter,
@@ -19,6 +20,7 @@ __all__ = [
     "Knowledge",
     "Artifact",
     "Chunk",
+    "RetrievalTest",
     "WikiPendingOperation",
     "WikiDeadLetter",
     "WikiPage",

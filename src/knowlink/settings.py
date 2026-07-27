@@ -39,6 +39,10 @@ class Settings(BaseSettings):
 
     # embedding
     embedding_dims: int = 1024
+    # 建库可选模型注册表：id → {model, dims}；当前全部走 llm_embed_base_url 单端点
+    embedding_models: dict = {
+        "qwen3-embedding-4b": {"model": "Qwen/Qwen3-Embedding-0.6B", "dims": 1024},
+    }
     batch_embed_size: int = 5  # detail.md §嵌入
     embed_max_chars: int = 20000  # detail.md §嵌入
     embed_retry_count: int = 5  # detail.md §嵌入
@@ -61,6 +65,7 @@ class Settings(BaseSettings):
     rerank_top_k: int = 10  # detail.md §混合检索
     rerank_threshold: float = 0.2  # detail.md §混合检索
     wiki_boost: float = 1.3  # detail.md §混合检索
+    authority_boost: float = 1.2  # ARCHITECTURE.md §六（文档权威性加权）
 
     # chat
     chat_history_rounds: int = 5

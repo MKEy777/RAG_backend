@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, JSON, String, Text
+from sqlalchemy import BigInteger, DateTime, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, SoftDeleteMixin, TimestampMixin, _uuid
@@ -28,6 +28,9 @@ class Knowledge(Base, TimestampMixin, SoftDeleteMixin):
     summary_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     enable_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     embedding_model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    uploaded_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    authority: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -35,3 +38,7 @@ class Knowledge(Base, TimestampMixin, SoftDeleteMixin):
     @property
     def needs_images(self) -> bool:
         return bool((self.metadata_ or {}).get("needs_images"))
+
+    @property
+    def wiki_enabled(self) -> bool:
+        return bool((self.metadata_ or {}).get("wiki_enabled", True))

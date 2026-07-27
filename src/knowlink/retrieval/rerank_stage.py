@@ -58,3 +58,25 @@ def apply_wiki_boost(candidates: list[Candidate], boost: float | None = None) ->
             c.score *= boost
     candidates.sort(key=lambda x: x.score, reverse=True)
     return candidates
+
+
+def apply_authority_boost(session, candidates: list[Candidate], boost: float | None = None) -> list[Candidate]:
+    from ..models.knowledge import Knowledge
+
+    boost = boost if boost is not None else settings.authority_boost
+    doc_ids = {c.document_id for c in candidates if c.document_id}
+    if not doc_ids:
+        return candidates
+    rows = (
+        session.query(Knowledge.id)
+        .filter(Knowledge.id.in_(doc_ids), Knowledge.authority == 1)
+        .all()
+    )
+    authoritative = {r[0] for r in rows}
+    if not authoritative:
+        return candidates
+    for c in candidates:
+        if c.document_id in authoritative:
+            c.score *= boost
+    candidates.sort(key=lambda x: x.score, reverse=True)
+    return candidates

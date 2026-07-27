@@ -21,6 +21,9 @@ def expand_parent_chunks(session: Session, candidates: list[Candidate]) -> list[
         if chunk.deleted_at is not None:
             # chunk 已删除，跳过
             continue
+        if not chunk.enabled:
+            # 已禁用的旧索引残留，跳过
+            continue
         # 历史数据兜底：文档已软删但 chunk 未联动软删的旧索引残留
         knowledge = session.get(Knowledge, chunk.knowledge_id)
         if knowledge is not None and knowledge.deleted_at is not None:

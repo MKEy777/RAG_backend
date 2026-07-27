@@ -33,6 +33,7 @@ async def run_indexing_pipeline(
     chunk_size = config.get("chunk_size", settings.chunk_size)
     overlap = config.get("chunk_overlap", settings.chunk_overlap)
     enable_pc = config.get("enable_parent_child", True)
+    separators = config.get("separators") or None
 
     log.info("索引管线启动", knowledge_id=knowledge_id, kb_id=kb_id, strategy=strategy,
              chunk_size=chunk_size, overlap=overlap)
@@ -51,6 +52,7 @@ async def run_indexing_pipeline(
         chunk_size=chunk_size,
         overlap=overlap,
         enable_parent_child=enable_pc,
+        separators=separators,
     )
     chunk_count = len(result) if result else 0
     log.info("分块完成", chunk_count=chunk_count, pc_mode=enable_pc)

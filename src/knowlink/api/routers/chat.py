@@ -21,10 +21,10 @@ class ChatRequest(BaseModel):
     kb_ids: list[str]
     query: str
     history: list[dict] = []
-    top_k: int = 10
+    top_k: int | None = None
     stream: bool = True
-    enable_wiki_boost: bool = False
-    enable_graph: bool = True
+    enable_wiki_boost: bool | None = None
+    enable_graph: bool | None = None
     session_id: str | None = None
 
 
@@ -44,6 +44,7 @@ async def chat(body: ChatRequest, session: Session = Depends(get_session)):
         top_k=body.top_k,
         enable_graph=body.enable_graph,
         enable_wiki_boost=body.enable_wiki_boost,
+        endpoint_defaults={"enable_graph": True, "enable_wiki_boost": False},
     )
     candidates = enrich_faq_candidates(session, result.faq_hits) + result.hits
 

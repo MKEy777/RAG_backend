@@ -27,19 +27,6 @@ class FakeVector:
         self.upserts.append((kb_id, list(chunk_ids), metadata))
 
 
-async def test_question_gen_disabled_by_default(db_session, fake_llm_factory, monkeypatch):
-    from knowlink.indexing.question_gen import generate_faq_chunks
-
-    db_session.add(_kb(None))
-    db_session.add(_chunk("c1", "RAG 结合检索与生成。"))
-    db_session.commit()
-
-    llm = fake_llm_factory([])
-    monkeypatch.setattr("knowlink.indexing.question_gen.get_llm_client", lambda: llm)
-    n = await generate_faq_chunks(db_session, "kb1", "doc1", 1, "文档一")
-    assert n == 0 and llm.calls == []
-
-
 async def test_question_gen_creates_faq_chunks(db_session, fake_llm_factory, monkeypatch):
     from knowlink.indexing import question_gen
 

@@ -18,7 +18,7 @@ from .faq import faq_search
 from .fusion import rrf_fusion
 from .graph_boost import graph_boost
 from .hybrid import Candidate, hybrid_search
-from .rerank_stage import apply_wiki_boost, rerank_stage
+from .rerank_stage import apply_authority_boost, apply_wiki_boost, rerank_stage
 
 log = get_logger("retrieval")
 
@@ -29,15 +29,56 @@ class RetrievalResult:
     faq_hits: list[Candidate] = field(default_factory=list)
 
 
+# 三层解析兜底值：与历史行为一致（ARCHITECTURE.md §4.4）
+_CONFIG_DEFAULTS: dict = {
+    "search_mode": "hybrid",
+    "top_k": 10,
+    "enable_graph": True,
+    "enable_rerank": True,
+    "expand_parent": True,
+    "enable_wiki_boost": False,
+    "recall_top_k": None,
+    "vector_threshold": None,
+    "keyword_threshold": None,
+    "rrf_k": None,
+    "vector_weight": None,
+    "keyword_weight": None,
+    "rerank_threshold": None,
+    "wiki_boost": None,
+}
+
+
+def _resolve_config(session: Session, kb_ids: list[str], overrides: dict, endpoint_defaults: dict | None = None) -> dict:
+    kb_cfg: dict = {}
+    for kb_id in kb_ids:
+        kb = session.get(KnowledgeBase, kb_id)
+        if kb and kb.retrieval_config:
+            kb_cfg = kb.retrieval_config
+            break
+    endpoint_defaults = endpoint_defaults or {}
+    resolved: dict = {}
+    for key, fallback in _CONFIG_DEFAULTS.items():
+        if overrides.get(key) is not None:
+            resolved[key] = overrides[key]
+        elif kb_cfg.get(key) is not None:
+            resolved[key] = kb_cfg[key]
+        elif key in endpoint_defaults:
+            resolved[key] = endpoint_defaults[key]
+        else:
+            resolved[key] = fallback
+    return resolved
+
+
 async def retrieve_candidates(
     session: Session,
     kb_ids: list[str],
     query: str,
-    top_k: int = 10,
-    enable_graph: bool = True,
-    enable_rerank: bool = True,
-    expand_parent: bool = True,
-    enable_wiki_boost: bool = False,
+    top_k: int | None = None,
+    search_mode: str | None = None,
+    enable_graph: bool | None = None,
+    enable_rerank: bool | None = None,
+    expand_parent: bool | None = None,
+    enable_wiki_boost: bool | None = None,
     recall_top_k: int | None = None,
     vector_threshold: float | None = None,
     keyword_threshold: float | None = None,
@@ -46,13 +87,46 @@ async def retrieve_candidates(
     keyword_weight: float | None = None,
     rerank_threshold: float | None = None,
     wiki_boost: float | None = None,
+    endpoint_defaults: dict | None = None,
 ) -> RetrievalResult:
+    cfg = _resolve_config(
+        session, kb_ids,
+        {
+            "search_mode": search_mode,
+            "top_k": top_k,
+            "enable_graph": enable_graph,
+            "enable_rerank": enable_rerank,
+            "expand_parent": expand_parent,
+            "enable_wiki_boost": enable_wiki_boost,
+            "recall_top_k": recall_top_k,
+            "vector_threshold": vector_threshold,
+            "keyword_threshold": keyword_threshold,
+            "rrf_k": rrf_k,
+            "vector_weight": vector_weight,
+            "keyword_weight": keyword_weight,
+            "rerank_threshold": rerank_threshold,
+            "wiki_boost": wiki_boost,
+        },
+        endpoint_defaults,
+    )
+    mode = cfg["search_mode"]
+    top_k = cfg["top_k"]
+    recall_top_k = cfg["recall_top_k"]
+    vector_threshold = cfg["vector_threshold"]
+    keyword_threshold = cfg["keyword_threshold"]
+    rrf_k = cfg["rrf_k"]
+    vector_weight = cfg["vector_weight"]
+    keyword_weight = cfg["keyword_weight"]
+    rerank_threshold = cfg["rerank_threshold"]
+    wiki_boost = cfg["wiki_boost"]
+
     query_vector: np.ndarray | None = None
-    try:
-        vectors = await embed_texts([query])
-        query_vector = vectors[0]
-    except Exception as e:
-        log.warning("嵌入服务不可用_回退BM25", error=str(e))
+    if mode != "fulltext":
+        try:
+            vectors = await embed_texts([query])
+            query_vector = vectors[0]
+        except Exception as e:
+            log.warning("嵌入服务不可用_回退BM25", error=str(e))
 
     faq_kbs: list[KnowledgeBase] = []
     doc_kb_ids: list[str] = []
@@ -84,6 +158,7 @@ async def retrieve_candidates(
                 top_k=recall_top_k,
                 vector_threshold=vector_threshold,
                 keyword_threshold=keyword_threshold,
+                mode=mode,
             )
             for kb_id in doc_kb_ids
         ],
@@ -101,7 +176,7 @@ async def retrieve_candidates(
 
     fused = rrf_fusion(all_vec, all_kw, k=rrf_k, vector_weight=vector_weight, keyword_weight=keyword_weight)
 
-    if enable_graph and doc_kb_ids:
+    if cfg["enable_graph"] and doc_kb_ids:
         existing_ids = {c.chunk_id for c in fused}
         graph_results = await asyncio.gather(
             *[graph_boost(kb_id, query, existing_ids) for kb_id in doc_kb_ids],
@@ -114,7 +189,8 @@ async def retrieve_candidates(
             fused.extend(hits)
         fused.sort(key=lambda x: x.score, reverse=True)
 
-    if doc_kb_ids and len(fused) < top_k:
+    # vector 模式下低召回扩展是纯关键词通道，跳过以保持模式语义
+    if doc_kb_ids and len(fused) < top_k and mode != "vector":
         variants = expand_queries(query)
         if variants:
             kw_th = (keyword_threshold if keyword_threshold is not None else settings.keyword_threshold) * 0.8
@@ -135,18 +211,20 @@ async def retrieve_candidates(
             if added:
                 log.info("低召回扩展补充", variants=len(variants), added=added)
 
-    if expand_parent:
+    if cfg["expand_parent"]:
         fused = expand_parent_chunks(session, fused)
 
     fused = dedup_candidates(fused)
 
-    if enable_rerank:
+    if cfg["enable_rerank"]:
         reranked = await rerank_stage(query, fused, top_k=top_k, threshold=rerank_threshold)
     else:
         reranked = fused[:top_k]
 
-    if enable_wiki_boost:
+    if cfg["enable_wiki_boost"]:
         reranked = apply_wiki_boost(reranked, boost=wiki_boost)
+
+    reranked = apply_authority_boost(session, reranked)
 
     result.hits = reranked
     return result
@@ -156,7 +234,11 @@ def enrich_faq_candidates(session: Session, faq_hits: list[Candidate]) -> list[C
     """FAQ 候选内容回填 Q/A（向量索引 metadata 无 answer，需回 DB 取）。"""
     if not faq_hits:
         return []
-    rows = session.query(Chunk).filter(Chunk.id.in_([h.chunk_id for h in faq_hits])).all()
+    rows = (
+        session.query(Chunk)
+        .filter(Chunk.id.in_([h.chunk_id for h in faq_hits]), Chunk.enabled.is_(True))
+        .all()
+    )
     by_id = {c.id: c for c in rows}
     out: list[Candidate] = []
     for h in faq_hits:

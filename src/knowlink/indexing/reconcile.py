@@ -29,6 +29,8 @@ def _live_index_entries(session: Session, kb_id: str) -> tuple[dict[str, str], d
         # wiki_page/faq 的 knowledge_id 不是 Knowledge 行，缺省视为存活
         if doc_deleted.get(c.knowledge_id, False):
             continue
+        if not c.enabled:
+            continue
         if c.chunk_type == "parent_text":
             continue
         meta = c.metadata_ or {}
@@ -53,6 +55,7 @@ def live_text_chunk_ids(session: Session, kb_id: str) -> set[str]:
             Chunk.knowledge_base_id == kb_id,
             Chunk.chunk_type == "text",
             Chunk.deleted_at.is_(None),
+            Chunk.enabled.is_(True),
             Knowledge.deleted_at.is_(None),
         )
         .all()
