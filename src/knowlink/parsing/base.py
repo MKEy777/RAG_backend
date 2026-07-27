@@ -21,6 +21,7 @@ class ImageRef:
 class ParseResult:
     markdown: str
     images: list[ImageRef] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
 
 
 class ParserCapabilityError(Exception):

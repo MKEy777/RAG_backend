@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import re
+import subprocess
 import tempfile
 import zipfile
+from pathlib import Path
 
 from .base import ImageRef, ParseResult, ParserCapabilityError
 from .registry import OLE_MAGIC, register
@@ -53,6 +55,24 @@ def _rasterize_vector(raw: bytes, ext: str) -> bytes | None:
         img.convert("RGB").save(buf, format="PNG")
         return buf.getvalue()
     except Exception:
+        pass
+    return _rasterize_with_imagemagick(raw, ext)
+
+
+def _rasterize_with_imagemagick(raw: bytes, ext: str) -> bytes | None:
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / f"input{ext}"
+            src.write_bytes(raw)
+            dst = Path(tmp) / "output.png"
+            subprocess.run(
+                ["magick", "convert", str(src), "-density", "150", str(dst)],
+                capture_output=True,
+                timeout=30,
+            )
+            if dst.exists() and dst.stat().st_size > 100:
+                return dst.read_bytes()
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
     return None
 

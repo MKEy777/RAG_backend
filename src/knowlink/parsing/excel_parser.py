@@ -205,6 +205,82 @@ def parse_xlsx(data: bytes, filename: str, **kwargs) -> ParseResult:
     return _parse_xlsx_data(data)
 
 
+@register("xlsb")
+def parse_xlsb(data: bytes, filename: str, **kwargs) -> ParseResult:
+    try:
+        xls = pd.ExcelFile(io.BytesIO(data), engine="pyxlsb")
+        parts: list[str] = []
+        for sheet_name in xls.sheet_names:
+            df = xls.parse(sheet_name, header=None)
+            if df.empty:
+                continue
+            headers, has_header = _extract_headers(df)
+            parts.append(f"## Sheet: {sheet_name}\n")
+            for row_idx, row in df.iterrows():
+                if has_header and row_idx == 0:
+                    continue
+                cells = []
+                all_empty = True
+                for col_idx, val in enumerate(row):
+                    if pd.isna(val):
+                        continue
+                    text = str(val).strip()
+                    if not text:
+                        continue
+                    all_empty = False
+                    col_name = headers[col_idx] if col_idx < len(headers) else _col_letter(col_idx)
+                    cells.append(f"{col_name}: {text}")
+                if all_empty:
+                    continue
+                parts.append(", ".join(cells))
+        return ParseResult(markdown="\n".join(parts))
+    except Exception:
+        from .docx_parser import _convert_with_libreoffice
+
+        converted = _convert_with_libreoffice(data, ".xlsb", ".xlsx")
+        if converted is not None:
+            return _parse_xlsx_data(converted)
+        raise ParserCapabilityError("xlsb", "pyxlsb or LibreOffice")
+
+
+@register("ods")
+def parse_ods(data: bytes, filename: str, **kwargs) -> ParseResult:
+    from .docx_parser import _convert_with_libreoffice
+
+    converted = _convert_with_libreoffice(data, ".ods", ".xlsx")
+    if converted is not None:
+        return _parse_xlsx_data(converted)
+    try:
+        xls = pd.ExcelFile(io.BytesIO(data), engine="odf")
+        parts: list[str] = []
+        for sheet_name in xls.sheet_names:
+            df = xls.parse(sheet_name, header=None)
+            if df.empty:
+                continue
+            headers, has_header = _extract_headers(df)
+            parts.append(f"## Sheet: {sheet_name}\n")
+            for row_idx, row in df.iterrows():
+                if has_header and row_idx == 0:
+                    continue
+                cells = []
+                all_empty = True
+                for col_idx, val in enumerate(row):
+                    if pd.isna(val):
+                        continue
+                    text = str(val).strip()
+                    if not text:
+                        continue
+                    all_empty = False
+                    col_name = headers[col_idx] if col_idx < len(headers) else _col_letter(col_idx)
+                    cells.append(f"{col_name}: {text}")
+                if all_empty:
+                    continue
+                parts.append(", ".join(cells))
+        return ParseResult(markdown="\n".join(parts))
+    except Exception:
+        raise ParserCapabilityError("ods", "LibreOffice (soffice) or odfpy")
+
+
 @register("xls")
 def parse_xls(data: bytes, filename: str, **kwargs) -> ParseResult:
     from .docx_parser import _convert_with_libreoffice

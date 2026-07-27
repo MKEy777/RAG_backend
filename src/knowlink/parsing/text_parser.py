@@ -97,25 +97,73 @@ def _resolve_local_images(text: str, images: list[ImageRef], base_dir: str) -> s
     return _MD_IMG_REF_RE.sub(repl, text)
 
 
+def _is_table_row(line: str) -> bool:
+    stripped = line.strip()
+    return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2
+
+
+def _is_separator_row(line: str) -> bool:
+    stripped = line.strip()
+    if not _is_table_row(stripped):
+        return False
+    cells = [c.strip() for c in stripped.split("|")[1:-1]]
+    return all(_TABLE_SEP_RE.match(c) for c in cells if c) and any(cells)
+
+
+def _is_empty_table_row(line: str) -> bool:
+    stripped = line.strip()
+    if not _is_table_row(stripped):
+        return False
+    cells = [c.strip() for c in stripped.split("|")[1:-1]]
+    return all(c == "" for c in cells)
+
+
+def _normalize_table_line(line: str) -> str:
+    stripped = line.strip()
+    cells = [c.strip() for c in stripped.split("|")[1:-1]]
+    if all(_TABLE_SEP_RE.match(c) for c in cells if c):
+        normalized = []
+        for c in cells:
+            left = ":" if c.startswith(":") else ""
+            right = ":" if c.endswith(":") else ""
+            normalized.append(f"{left}---{right}")
+        return "| " + " | ".join(normalized) + " |"
+    return "| " + " | ".join(cells) + " |"
+
+
+def _separator_for(header_line: str) -> str:
+    cells = [c.strip() for c in header_line.strip().split("|")[1:-1]]
+    return "| " + " | ".join("---" for _ in cells) + " |"
+
+
+def _normalize_table_block(block: list[str]) -> list[str]:
+    while block and _is_empty_table_row(block[0]):
+        block.pop(0)
+    if block and _is_separator_row(block[0]):
+        block.pop(0)
+    if len(block) >= 2 and not _is_separator_row(block[1]):
+        sep = _separator_for(block[0])
+        block = [block[0], sep] + block[1:]
+    return block
+
+
 def _format_tables(text: str) -> str:
     """Normalize markdown table spacing for consistent chunking."""
     lines = text.split("\n")
     result: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2:
-            cells = [c.strip() for c in stripped.split("|")[1:-1]]
-            if all(_TABLE_SEP_RE.match(c) for c in cells if c):
-                normalized = []
-                for c in cells:
-                    left = ":" if c.startswith(":") else ""
-                    right = ":" if c.endswith(":") else ""
-                    normalized.append(f"{left}---{right}")
-                result.append("| " + " | ".join(normalized) + " |")
-            else:
-                result.append("| " + " | ".join(cells) + " |")
-        else:
-            result.append(line)
+    i = 0
+    while i < len(lines):
+        if not _is_table_row(lines[i]):
+            result.append(lines[i])
+            i += 1
+            continue
+        block: list[str] = []
+        while i < len(lines) and _is_table_row(lines[i]):
+            block.append(lines[i])
+            i += 1
+        block = _normalize_table_block(block)
+        for line in block:
+            result.append(_normalize_table_line(line))
     return "\n".join(result)
 
 

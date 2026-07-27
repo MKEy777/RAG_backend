@@ -4,17 +4,21 @@ import io
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from .base import ImageRef, ParseResult, ParserCapabilityError
 from .registry import OLE_MAGIC, register
 
-# 中文编号标题模式
 _NUM_H1_RE = re.compile(r"^\d+\s+\S")
 _NUM_H2_RE = re.compile(r"^\d+\.\d+\s+\S")
 _NUM_H3_RE = re.compile(r"^\d+\.\d+\.\d+\s+\S")
 _CN_H1_RE = re.compile(r"^[一二三四五六七八九十]+、")
 _HEADING_MAX_LEN = 40
+_LO_RETRIES = 3
+_LO_BACKOFF_BASE = 0.5
+_IMG_MIN_PX = 50
+_IMG_MAX_EDGE = 1920
 
 
 def _has_libreoffice() -> bool:
@@ -32,20 +36,34 @@ def _has_libreoffice() -> bool:
 def _convert_with_libreoffice(data: bytes, suffix: str, target_suffix: str) -> bytes | None:
     if not _has_libreoffice():
         return None
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / f"input{suffix}"
-        src.write_bytes(data)
-        try:
-            subprocess.run(
-                ["soffice", "--headless", "--convert-to", target_suffix.lstrip("."), "--outdir", tmp, str(src)],
-                capture_output=True,
-                timeout=120,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return None
-        out = Path(tmp) / f"input{target_suffix}"
-        if out.exists():
-            return out.read_bytes()
+    for attempt in range(_LO_RETRIES):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / f"input{suffix}"
+            src.write_bytes(data)
+            profile_dir = Path(tmp) / "lo_profile"
+            profile_dir.mkdir()
+            profile_url = profile_dir.as_uri()
+            try:
+                subprocess.run(
+                    [
+                        "soffice", "--headless",
+                        f"-env:UserInstallation={profile_url}",
+                        "--convert-to", target_suffix.lstrip("."),
+                        "--outdir", tmp, str(src),
+                    ],
+                    capture_output=True,
+                    timeout=120,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                if attempt < _LO_RETRIES - 1:
+                    time.sleep(_LO_BACKOFF_BASE * (attempt + 1))
+                    continue
+                return None
+            out = Path(tmp) / f"input{target_suffix}"
+            if out.exists():
+                return out.read_bytes()
+        if attempt < _LO_RETRIES - 1:
+            time.sleep(_LO_BACKOFF_BASE * (attempt + 1))
     return None
 
 
@@ -129,6 +147,66 @@ def _extract_omml(paragraph) -> str:
     return " ".join(f"${f}$" for f in formulas)
 
 
+def _filter_and_resize_image(blob: bytes) -> ImageRef | None:
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(blob))
+        w, h = img.size
+        if w < _IMG_MIN_PX or h < _IMG_MIN_PX:
+            return None
+        max_edge = max(w, h)
+        if max_edge > _IMG_MAX_EDGE:
+            ratio = _IMG_MAX_EDGE / max_edge
+            img = img.resize((max(1, int(w * ratio)), max(1, int(h * ratio))))
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="PNG")
+        return ImageRef(data=buf.getvalue(), mime="image/png")
+    except Exception:
+        if len(blob) >= 100:
+            return ImageRef(data=blob, mime="image/png")
+        return None
+
+
+def _convert_table_to_markdown(table) -> str:
+    from docx.oxml.ns import qn
+
+    rows_data: list[list[str]] = []
+    for row in table.rows:
+        cells_text: list[str] = []
+        prev_text = None
+        for cell in row.cells:
+            text = cell.text.strip().replace("\n", " ")
+            tc = cell._tc
+            grid_span = tc.find(qn('w:tcPr'))
+            span = 1
+            if grid_span is not None:
+                gs = grid_span.find(qn('w:gridSpan'))
+                if gs is not None:
+                    try:
+                        span = int(gs.get(qn('w:val'), '1'))
+                    except (ValueError, TypeError):
+                        span = 1
+            if text == prev_text and span > 1:
+                continue
+            cells_text.append(text)
+            prev_text = text
+        rows_data.append(cells_text)
+
+    if not rows_data:
+        return ""
+    max_cols = max(len(r) for r in rows_data)
+    for r in rows_data:
+        while len(r) < max_cols:
+            r.append("")
+    lines = []
+    for i, row in enumerate(rows_data):
+        lines.append("| " + " | ".join(row) + " |")
+        if i == 0:
+            lines.append("| " + " | ".join(["---"] * max_cols) + " |")
+    return "\n".join(lines)
+
+
 def _parse_docx_python_docx(data: bytes) -> ParseResult:
     from docx import Document
     from docx.table import Table as DocxTable
@@ -136,12 +214,14 @@ def _parse_docx_python_docx(data: bytes) -> ParseResult:
 
     doc = Document(io.BytesIO(data))
 
-    # rId -> ImageRef 映射
     img_map: dict[str, ImageRef] = {}
     for rel_id, rel in doc.part.rels.items():
         if "image" in rel.reltype:
             try:
-                img_map[rel_id] = ImageRef(data=rel.target_part.blob, mime="image/png")
+                blob = rel.target_part.blob
+                ref = _filter_and_resize_image(blob)
+                if ref:
+                    img_map[rel_id] = ref
             except Exception:
                 pass
 
@@ -189,14 +269,9 @@ def _parse_docx_python_docx(data: bytes) -> ParseResult:
             else:
                 parts.append(text)
         elif isinstance(block, DocxTable):
-            rows_text = []
-            for row in block.rows:
-                cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
-                rows_text.append("| " + " | ".join(cells) + " |")
+            rows_text = _convert_table_to_markdown(block)
             if rows_text:
-                header_sep = "| " + " | ".join(["---"] * len(block.rows[0].cells)) + " |"
-                rows_text.insert(1, header_sep)
-                parts.append("\n".join(rows_text))
+                parts.append(rows_text)
 
     return ParseResult(markdown="\n\n".join(parts), images=images)
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import os
 import re
+import threading
 from statistics import median
 
 import pypdfium2 as pdfium
@@ -9,9 +11,39 @@ import pypdfium2 as pdfium
 from .base import ImageRef, ParseResult
 from .registry import register
 
+_PDFIUM_LOCK = threading.Lock()
+
+
+def _env_float(name: str, default: float) -> float:
+    v = os.environ.get(name)
+    if v is None or not str(v).strip():
+        return default
+    try:
+        return float(v)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    v = os.environ.get(name)
+    if v is None or not str(v).strip():
+        return default
+    try:
+        return int(str(v).strip())
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None or not str(v).strip():
+        return default
+    return str(v).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 # detail.md §pdf
-SCAN_IMAGE_AREA_RATIO = 0.5
-SCAN_MIN_CHARS = 10
+SCAN_IMAGE_AREA_RATIO = _env_float("KNOWLINK_PDF_SCAN_IMAGE_RATIO", 0.5)
+SCAN_MIN_CHARS = _env_int("KNOWLINK_PDF_SCAN_MIN_CHARS", 10)
 SCAN_IMAGE_AREA_RATIO_LOW = 0.1
 TITLE_H1_RATIO = 2.0
 TITLE_H2_RATIO = 1.6
@@ -21,22 +53,23 @@ TITLE_MIN_LEN = 2
 TITLE_MAX_LEN = 80
 HEADER_FOOTER_PAGE_RATIO = 0.6
 HEADER_FOOTER_MIN_PAGES = 4
-EMBED_IMG_MIN_PX = 80
-EMBED_IMG_AREA_RATIO = 0.01
-EMBED_IMG_MAX_COUNT = 50
-EMBED_IMG_MAX_EDGE = 1600  # detail.md §pdf: 大图缩放上限
-EMBED_REPEAT_PAGE_FRAC = 0.5  # detail.md §pdf: 跨页重复阈值（logo/水印）
-VECTOR_FIG_MIN_PATHS = 10  # 矢量图最少路径对象数
-VECTOR_FIG_MIN_AREA = 0.015  # 矢量图最小面积占比
-VECTOR_FIG_MAX_AREA = 0.42  # 矢量图最大面积占比
+EMBED_IMG_MIN_PX = _env_int("KNOWLINK_PDF_EMBED_MIN_PIXELS", 80)
+EMBED_IMG_AREA_RATIO = _env_float("KNOWLINK_PDF_EMBED_MIN_AREA_RATIO", 0.01)
+EMBED_IMG_MAX_COUNT = _env_int("KNOWLINK_PDF_EMBED_MAX_IMAGES", 50)
+EMBED_IMG_MAX_EDGE = 1600
+EMBED_REPEAT_PAGE_FRAC = _env_float("KNOWLINK_PDF_EMBED_REPEAT_PAGE_FRAC", 0.5)
+VECTOR_FIG_MIN_PATHS = 10
+VECTOR_FIG_MIN_AREA = _env_float("KNOWLINK_PDF_MIN_CHART_REGION_AREA", 0.015)
+VECTOR_FIG_MAX_AREA = _env_float("KNOWLINK_PDF_MAX_CHART_REGION_AREA", 0.42)
 QUALITY_SINGLE_CHAR_RATIO = 0.18
 QUALITY_PUNCT_RATIO = 0.12
 QUALITY_DISORDER_RATIO = 0.20
 QUALITY_ORIGINAL_DISORDER = 0.08
-NOISE_COL_WIDTH_RATIO = 0.12
-SPACE_GAP_RATIO = 0.4
+NOISE_COL_WIDTH_RATIO = _env_float("KNOWLINK_PDF_MARGIN_COL_WIDTH_RATIO", 0.12)
+SPACE_GAP_RATIO = _env_float("KNOWLINK_PDF_WORD_GAP_WIDTH_RATIO", 0.4)
 TITLE_END_PUNCT = set("。？！，；：.?!;,")
 LINENUM_RUN_MIN = 3
+FORCE_SCANNED_PDF = _env_bool("KNOWLINK_PDF_FORCE_SCANNED", False)
 
 _CN_H1_RE = re.compile(r"^[一二三四五六七八九十]+、")
 _CN_H2_RE = re.compile(r"^\d+\.\d+\s")
@@ -58,6 +91,22 @@ _CN_PARA_BREAK_RE = re.compile(r"[。？！；：]$")
 _LIST_ITEM_RE = re.compile(r"^(?:[-*•]\s|\d+[.)、]\s)")
 _HAS_CHINESE_RE = re.compile(r"[\u4e00-\u9fff]")
 _HAS_CODE_FEATURE_RE = re.compile(r"[=\(\)\[\]{}]|\w+\.\w+|self\.|:\s*$|,\s*$")
+
+# detail.md §pdf: PDF文本层伪影字符（U+FFFE/软连字符/零宽字符）
+_PDF_ARTIFACT_RE = re.compile(r"[\u00ad\u200b-\u200f\ufeff\ufffe\uffff]")
+_PDF_ARTIFACT_JOIN_RE = re.compile(r"(\w)[\u00ad\ufffe](\w)")
+_CHART_DEBRIS_LINE_RE = re.compile(
+    r"^(?:"
+    r"[\d\s.]+|"
+    r"\d{1,2}|"
+    r"\d+-layer|"
+    r"iter\.\s*\(1e4\)|"
+    r"(?:training|test)\s+error\s*\(%\)"
+    r")$",
+    re.IGNORECASE,
+)
+_CHART_LAYER_RE = re.compile(r"^\d+-layer$", re.IGNORECASE)
+_FIGURE_CAPTION_RE = re.compile(r"^Figure\s+\d+\b", re.IGNORECASE)
 
 
 def _is_scan_page(page: pdfium.PdfPage) -> bool:
@@ -95,12 +144,56 @@ def _is_formula_page(page: pdfium.PdfPage, extracted_text: str) -> bool:
     return math_chars / total > 0.15
 
 
+RENDER_MAX_EDGE = 3000  # detail.md §pdf: 渲染图长边上限
+
+
+def _effective_scale(page: pdfium.PdfPage, base_scale: float = 2.0) -> float:
+    width, height = page.get_size()
+    long_edge = max(width, height) * base_scale
+    if long_edge > RENDER_MAX_EDGE:
+        return RENDER_MAX_EDGE / max(width, height)
+    return base_scale
+
+
 def _render_page_image(page: pdfium.PdfPage, scale: float = 2.0) -> bytes:
+    scale = _effective_scale(page, scale)
     bitmap = page.render(scale=scale)
     pil_image = bitmap.to_pil()
     buf = io.BytesIO()
     pil_image.convert("RGB").save(buf, format="JPEG", quality=85)
     return buf.getvalue()
+
+
+def _collect_invisible_boxes(page: pdfium.PdfPage) -> list[tuple[float, float, float, float]]:
+    boxes: list[tuple[float, float, float, float]] = []
+    try:
+        raw = pdfium.raw
+        for obj in page.get_objects():
+            if obj.type != raw.FPDF_PAGEOBJ_TEXT:
+                continue
+            try:
+                mode = raw.FPDFTextObj_GetTextRenderMode(obj.raw)
+            except Exception:
+                continue
+            if mode != raw.FPDF_TEXTRENDERMODE_INVISIBLE:
+                continue
+            try:
+                left, bottom, right, top = obj.get_bounds()
+            except Exception:
+                continue
+            boxes.append(
+                (min(left, right), min(bottom, top), max(left, right), max(bottom, top))
+            )
+    except Exception:
+        return []
+    return boxes
+
+
+def _point_in_boxes(x: float, y: float, boxes: list[tuple[float, float, float, float]]) -> bool:
+    for x0, y0, x1, y1 in boxes:
+        if x0 <= x <= x1 and y0 <= y <= y1:
+            return True
+    return False
 
 
 def _extract_text_page(page: pdfium.PdfPage) -> str:
@@ -109,8 +202,10 @@ def _extract_text_page(page: pdfium.PdfPage) -> str:
     if char_count == 0:
         return ""
 
-    # 先获取原始文本作为回退选项
     original_text = textpage.get_text_range(0, char_count)
+
+    width, height = page.get_size()
+    invisible_boxes = _collect_invisible_boxes(page)
 
     chars: list[dict] = []
     for i in range(char_count):
@@ -119,12 +214,19 @@ def _extract_text_page(page: pdfium.PdfPage) -> str:
         if not ch or ch.isspace():
             chars.append({"ch": ch, "x0": c[0], "y0": c[1], "x1": c[2], "y1": c[3], "h": c[3] - c[1]})
             continue
-        chars.append({"ch": ch, "x0": c[0], "y0": c[1], "x1": c[2], "y1": c[3], "h": c[3] - c[1]})
+        x0, x1 = (c[0], c[2]) if c[0] <= c[2] else (c[2], c[0])
+        y0, y1 = (c[1], c[3]) if c[1] <= c[3] else (c[3], c[1])
+        if x1 < 0 or x0 > width or y1 < 0 or y0 > height:
+            continue
+        if invisible_boxes and _point_in_boxes((x0 + x1) / 2, (y0 + y1) / 2, invisible_boxes):
+            continue
+        chars.append({"ch": ch, "x0": x0, "y0": y0, "x1": x1, "y1": y1, "h": y1 - y0})
 
     if not chars:
         return ""
 
     lines = _group_into_lines(chars)
+    lines = _merge_orphan_punctuation_lines(lines)
     lines = _detect_columns_and_reorder(lines, page)
     lines = _infer_spaces(lines)
     lines = _strip_code_line_numbers(lines)
@@ -139,45 +241,70 @@ def _extract_text_page(page: pdfium.PdfPage) -> str:
     return reconstructed
 
 
+def _layout_garbled_line_fraction(text: str) -> float:
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return 0.0
+    garbled = 0
+    for ln in lines:
+        words = ln.split()
+        if len(words) >= 6 and sum(1 for w in words if len(w) <= 2) / len(words) > 0.45:
+            garbled += 1
+    return garbled / len(lines)
+
+
+def _plain_is_well_formed(plain: str) -> bool:
+    plain = (plain or "").strip()
+    if not plain:
+        return False
+    if re.search(r"\[\w+,\s", plain):
+        return True
+    if plain.count(" . . ") >= 2:
+        return True
+    words = re.findall(r"\S+", plain)
+    if len(words) < 30:
+        return False
+    avg_len = sum(len(w) for w in words) / len(words)
+    return avg_len >= 5.0
+
+
 def _should_fallback_to_original(reconstructed: str, original: str, lines: list[dict]) -> bool:
-    """检查重建文本质量，决定是否回退到原始文本"""
     if not original or not original.strip():
         return False
     if not reconstructed or not reconstructed.strip():
         return True
 
+    if _plain_is_well_formed(original):
+        garbled_recon = _layout_garbled_line_fraction(reconstructed)
+        garbled_plain = _layout_garbled_line_fraction(original)
+        if garbled_recon >= 0.20 and garbled_plain < 0.08:
+            return True
+
     recon_lines = [l for l in reconstructed.split("\n") if l.strip()]
     if not recon_lines:
         return True
 
-    # 检查单字符行比例
     single_char_lines = sum(1 for l in recon_lines if len(l.strip()) == 1)
     single_char_ratio = single_char_lines / len(recon_lines)
     if single_char_ratio > QUALITY_SINGLE_CHAR_RATIO:
         return True
 
-    # 检查纯标点行比例
     punct_lines = sum(1 for l in recon_lines if all(c in "。，、；：？！.!?;:," for c in l.strip()))
     punct_ratio = punct_lines / len(recon_lines)
     if punct_ratio > QUALITY_PUNCT_RATIO:
         return True
 
-    # 检查“碎词”模式：英文单词被拆成单字符（如 "d i d l" 或 "wor p ece"）
     recon_words = reconstructed.split()
     if recon_words:
         single_char_words = sum(1 for w in recon_words if len(w) == 1 and w.isalpha())
         single_char_word_ratio = single_char_words / len(recon_words)
-        # 如果超过20%的词是单字符，说明空格推断有问题
         if single_char_word_ratio > 0.20:
             return True
 
-        # 检查平均词长：正常英文/代码平均词长>3，如果重建后平均词长<2.5则异常
         recon_avg_len = sum(len(w) for w in recon_words) / len(recon_words)
         if recon_avg_len < 2.5:
             return True
 
-    # 检查代码被拆散的模式（如 "Posi ti onalEncodi ng" 或 "i ni t"）
-    # 特征：大量 2-3 字符的“词”且包含大小写混合
     short_mixed_words = sum(
         1 for w in recon_words
         if 2 <= len(w) <= 3 and any(c.isupper() for c in w) and any(c.islower() for c in w)
@@ -185,14 +312,25 @@ def _should_fallback_to_original(reconstructed: str, original: str, lines: list[
     if recon_words and short_mixed_words / len(recon_words) > 0.15:
         return True
 
-    # 比较原文和重建文本的平均词长
     original_words = original.split()
     if original_words and recon_words:
         orig_avg_len = sum(len(w) for w in original_words) / len(original_words)
         recon_avg_len = sum(len(w) for w in recon_words) / len(recon_words)
-        # 如果原文平均词长明显更长（>1.5倍），说明重建质量差
         if orig_avg_len > 3 and recon_avg_len < orig_avg_len * 0.6:
             return True
+
+    # 标题存活验证：原文第一行有效内容应在重建文本中存活
+    for ln in original.splitlines():
+        probe = ln.strip()
+        if len(probe) < 24:
+            continue
+        alnum = "".join(c for c in probe if c.isalnum())[:16]
+        if len(alnum) < 12:
+            continue
+        layout_alnum = "".join(c for c in reconstructed if c.isalnum())
+        if alnum not in layout_alnum:
+            return True
+        break
 
     return False
 
@@ -239,8 +377,110 @@ def _finalize_line(chars: list[dict]) -> dict:
     }
 
 
+def _merge_orphan_punctuation_lines(lines: list[dict]) -> list[dict]:
+    if not lines:
+        return []
+    merged: list[dict] = []
+    for ln in lines:
+        t = ln["text"].strip()
+        if (
+            merged
+            and t
+            and len(t) <= 4
+            and all(c in ".,;:!?…·" or c.isspace() for c in t)
+        ):
+            suffix = "".join(t.split())
+            prev = merged[-1]["text"]
+            if suffix and prev and not prev.endswith((" ", "-")):
+                merged[-1]["text"] = prev + suffix
+            else:
+                merged[-1]["text"] = (prev + " " + t).strip()
+            continue
+        merged.append(dict(ln))
+    return merged
+
+
 def _detect_columns_and_reorder(lines: list[dict], page: pdfium.PdfPage) -> list[dict]:
-    return lines
+    all_chars = []
+    for ln in lines:
+        all_chars.extend(ln.get("chars", []))
+    if len(all_chars) < 20:
+        return lines
+    width, height = page.get_size()
+    scale = 2.0
+    columns = _filter_reading_columns(all_chars, scale, width)
+    if len(columns) <= 1:
+        return lines
+    reordered: list[dict] = []
+    for col_chars in columns:
+        col_lines = _group_into_lines(col_chars)
+        reordered.extend(col_lines)
+    return reordered
+
+
+def _find_split(chars: list[dict], min_gap: float) -> float | None:
+    intervals = sorted(((c["x0"], c["x1"]) for c in chars), key=lambda iv: iv[0])
+    if not intervals:
+        return None
+    cur_end = intervals[0][1]
+    best_gap, best_cut = 0.0, None
+    for a, b in intervals[1:]:
+        gap = a - cur_end
+        if gap >= min_gap and gap > best_gap:
+            best_gap, best_cut = gap, cur_end + gap / 2
+        if b > cur_end:
+            cur_end = b
+    return best_cut
+
+
+def _split_columns(chars: list[dict], scale: float, width: float, depth: int = 0) -> list[list[dict]]:
+    if len(chars) <= 1 or depth > 10:
+        return [chars]
+    min_gap = max(scale * 2.5, width * 0.04)
+    cut = _find_split(chars, min_gap)
+    if cut is None:
+        return [chars]
+    left = [c for c in chars if (c["x0"] + c["x1"]) / 2 < cut]
+    right = [c for c in chars if (c["x0"] + c["x1"]) / 2 >= cut]
+    if not left or not right:
+        return [chars]
+    return _split_columns(left, scale, width, depth + 1) + _split_columns(
+        right, scale, width, depth + 1
+    )
+
+
+def _column_x_span(chars: list[dict]) -> float:
+    if not chars:
+        return 0.0
+    return max(c["x1"] for c in chars) - min(c["x0"] for c in chars)
+
+
+def _is_artifact_column(chars: list[dict], width: float) -> bool:
+    if not chars or width <= 0:
+        return True
+    span = _column_x_span(chars)
+    if span <= 0:
+        return True
+    lines = _group_into_lines(chars)
+    single_frac = sum(1 for ln in lines if len(ln["text"]) <= 2) / len(lines) if lines else 0.0
+    narrow = span / width < NOISE_COL_WIDTH_RATIO
+    if narrow and single_frac >= 0.45:
+        return True
+    ys = [(c["y0"] + c["y1"]) / 2 for c in chars]
+    y_span = max(ys) - min(ys)
+    if y_span > span * 3.5 and len(chars) >= 8 and single_frac >= 0.35:
+        return True
+    return False
+
+
+def _filter_reading_columns(chars: list[dict], scale: float, width: float) -> list[list[dict]]:
+    cols = _split_columns(chars, scale, width)
+    kept = [c for c in cols if not _is_artifact_column(c, width)]
+    if kept:
+        return kept
+    if len(cols) > 1:
+        return [max(cols, key=_column_x_span)]
+    return cols
 
 
 def _infer_spaces(lines: list[dict]) -> list[dict]:
@@ -357,9 +597,9 @@ def _filter_chart_labels(lines: list[dict]) -> list[dict]:
     result = []
     i = 0
     while i < len(lines):
-        if _is_numeric_short(lines[i]["text"]):
+        if _is_chart_debris_line(lines[i]["text"]):
             run_start = i
-            while i < len(lines) and _is_numeric_short(lines[i]["text"]):
+            while i < len(lines) and (_is_chart_debris_line(lines[i]["text"]) or not lines[i]["text"].strip()):
                 i += 1
             if i - run_start >= 3:
                 continue
@@ -371,11 +611,17 @@ def _filter_chart_labels(lines: list[dict]) -> list[dict]:
     return result
 
 
-def _is_numeric_short(text: str) -> bool:
+def _is_chart_debris_line(text: str) -> bool:
     t = text.strip()
-    if not t or len(t) > 20:
+    if not t:
         return False
-    return bool(re.match(r"^[\d\s\.\-\+\(\)eE,]+$", t))
+    if _CHART_DEBRIS_LINE_RE.match(t):
+        return True
+    if _CHART_LAYER_RE.match(t):
+        return True
+    if re.fullmatch(r"[\d\s.()\-]+", t) and len(t) <= 24 and sum(c.isdigit() for c in t) >= 3:
+        return True
+    return False
 
 
 def _strip_arxiv_pagenum(lines: list[dict]) -> list[dict]:
@@ -550,20 +796,17 @@ def _encode_embedded_image(pil_image) -> bytes | None:
 
 
 def _detect_vector_figures(page: pdfium.PdfPage, page_idx: int) -> list[dict]:
-    """Detect vector-only chart regions (no embedded bitmap) and render them."""
     width, height = page.get_size()
     page_area = width * height
     if page_area == 0:
         return []
 
-    # 统计路径对象（矢量图由大量 path 组成）
     path_count = 0
-    for _ in page.get_objects(filter=(2,)):  # 2 = FPDF_PAGEOBJ_PATH
+    for _ in page.get_objects(filter=(2,)):
         path_count += 1
     if path_count < VECTOR_FIG_MIN_PATHS:
         return []
 
-    # 检查是否已有嵌入位图覆盖（如果有，_collect_embedded_candidates 已处理）
     has_bitmap = False
     for obj in page.get_objects(filter=(3,)):
         m = obj.get_matrix()
@@ -576,17 +819,26 @@ def _detect_vector_figures(page: pdfium.PdfPage, page_idx: int) -> list[dict]:
     if has_bitmap:
         return []
 
-    # 渲染页面中矢量图密集区域
-    # 简化策略：如果路径对象多且无位图，渲染页面中心区域
-    scale = 2.0
+    caption_y = _find_figure_caption_y(page, height)
+    scale = _effective_scale(page)
     bitmap = page.render(scale=scale)
     pil_full = bitmap.to_pil().convert("RGB")
     pw, ph = pil_full.size
 
-    # 裁剪中间 80% 区域（去掉页边距）
-    margin_x = int(pw * 0.1)
-    margin_y = int(ph * 0.1)
-    cropped = pil_full.crop((margin_x, margin_y, pw - margin_x, ph - margin_y))
+    if caption_y is not None:
+        top = max(0, int(ph * 0.08))
+        bottom = min(ph, int((caption_y / height) * ph))
+        left = int(pw * 0.08)
+        right = int(pw * 0.92)
+        if bottom - top < ph * 0.1:
+            top = max(0, bottom - int(ph * 0.35))
+    else:
+        left = int(pw * 0.1)
+        right = int(pw * 0.9)
+        top = int(ph * 0.1)
+        bottom = int(ph * 0.9)
+
+    cropped = pil_full.crop((left, top, right, bottom))
     cw, ch = cropped.size
     crop_area_ratio = (cw * ch) / (pw * ph)
 
@@ -599,23 +851,57 @@ def _detect_vector_figures(page: pdfium.PdfPage, page_idx: int) -> list[dict]:
     if len(data) < 1000:
         return []
 
-    return [{"page": page_idx, "data": data, "y_top": height * 0.5}]
+    y_top = height - (top / ph * height) if caption_y else height * 0.5
+    return [{"page": page_idx, "data": data, "y_top": y_top}]
+
+
+def _find_figure_caption_y(page: pdfium.PdfPage, page_height: float) -> float | None:
+    textpage = page.get_textpage()
+    n = textpage.count_chars()
+    if n == 0:
+        return None
+    buf: list[str] = []
+    last_y = None
+    for i in range(n):
+        ch = textpage.get_text_range(i, 1)
+        c = textpage.get_charbox(i)
+        y = (c[1] + c[3]) / 2
+        if last_y is not None and abs(y - last_y) > 3.0:
+            line_text = "".join(buf).strip()
+            if _FIGURE_CAPTION_RE.match(line_text):
+                return last_y
+            buf = []
+        buf.append(ch)
+        last_y = y
+    if buf:
+        line_text = "".join(buf).strip()
+        if _FIGURE_CAPTION_RE.match(line_text):
+            return last_y
+    return None
 
 
 @register("pdf")
 def parse_pdf(data: bytes, filename: str, **kwargs) -> ParseResult:
+    with _PDFIUM_LOCK:
+        return _parse_pdf_locked(data, filename, **kwargs)
+
+
+def _parse_pdf_locked(data: bytes, filename: str, **kwargs) -> ParseResult:
+    force_scanned = kwargs.get("force_scanned", FORCE_SCANNED_PDF)
     doc = pdfium.PdfDocument(data)
     images: list[ImageRef] = []
     pages_text: list[str] = []
     page_is_scan: list[bool] = []
     all_embed_candidates: list[dict] = []
     text_page_count = 0
+    scanned_page_count = 0
 
-    # Phase 1: 逐页提取文字 + 收集嵌入图候选
     for page_idx in range(len(doc)):
         page = doc[page_idx]
-        if _is_scan_page(page):
+        is_scan = force_scanned or _is_scan_page(page)
+        if is_scan:
             page_is_scan.append(True)
+            scanned_page_count += 1
             img_data = _render_page_image(page)
             ref = ImageRef(data=img_data, mime="image/jpeg")
             images.append(ref)
@@ -625,15 +911,14 @@ def parse_pdf(data: bytes, filename: str, **kwargs) -> ParseResult:
             text = _extract_text_page(page)
             if _is_formula_page(page, text):
                 page_is_scan[-1] = True
+                scanned_page_count += 1
                 img_data = _render_page_image(page)
                 ref = ImageRef(data=img_data, mime="image/jpeg")
                 images.append(ref)
                 pages_text.append(f"![formula_page_{page_idx}](images/{ref.id}.jpg)")
                 continue
             text_page_count += 1
-            # 收集嵌入位图候选
             all_embed_candidates.extend(_collect_embedded_candidates(page, page_idx))
-            # 检测矢量图区域
             vec_figs = _detect_vector_figures(page, page_idx)
             for vf in vec_figs:
                 ref = ImageRef(data=vf["data"], mime="image/jpeg")
@@ -642,10 +927,8 @@ def parse_pdf(data: bytes, filename: str, **kwargs) -> ParseResult:
                 text = text + "\n\n" + placeholder if text.strip() else placeholder
             pages_text.append(text)
 
-    # Phase 2: 跨页过滤（logo/水印去重 + 页内去重 + 数量上限）
     kept = _filter_embedded_candidates(all_embed_candidates, text_page_count)
 
-    # Phase 3: 编码 + 插入占位符
     page_placeholders: dict[int, list[str]] = {}
     for c in kept:
         img_data = _encode_embedded_image(c["pil"])
@@ -656,7 +939,6 @@ def parse_pdf(data: bytes, filename: str, **kwargs) -> ParseResult:
         placeholder = f"![fig_{c['page']}](images/{ref.id}.jpg)"
         page_placeholders.setdefault(c["page"], []).append(placeholder)
 
-    # 将占位符追加到对应页面文本末尾
     for pg_idx, phs in page_placeholders.items():
         if pg_idx < len(pages_text):
             existing = pages_text[pg_idx]
@@ -665,13 +947,70 @@ def parse_pdf(data: bytes, filename: str, **kwargs) -> ParseResult:
     pages_text = _remove_headers_footers(pages_text)
     markdown = "\n\n".join(pages_text)
     markdown = _postprocess_markdown(markdown)
+    page_count = len(doc)
     doc.close()
-    return ParseResult(markdown=markdown, images=images)
+
+    metadata = {
+        "page_count": page_count,
+        "scanned_page_count": scanned_page_count,
+        "text_page_count": text_page_count,
+        "embedded_image_count": len(kept),
+    }
+    return ParseResult(markdown=markdown, images=images, metadata=metadata)
+
+
+def _sanitize_pdf_text(text: str) -> str:
+    if not text:
+        return text
+    text = _PDF_ARTIFACT_RE.sub("", text)
+    text = _PDF_ARTIFACT_JOIN_RE.sub(r"\1\2", text)
+    return text
+
+
+def _is_body_paragraph_line(text: str) -> bool:
+    t = text.strip()
+    if len(t) < 48:
+        return False
+    return len(t.split()) >= 8
+
+
+def _is_figure_interior_line(text: str) -> bool:
+    t = text.strip()
+    if not t or _FIGURE_CAPTION_RE.match(t):
+        return False
+    if re.match(r"^\d{1,3}$", t):
+        return True
+    if _is_body_paragraph_line(t):
+        return False
+    if _is_chart_debris_line(t):
+        return True
+    if t.endswith((".", "。", "!", "?", "！")) and len(t) >= 15:
+        return False
+    if len(t.split()) >= 7:
+        return False
+    if len(t) <= 40:
+        return True
+    return False
+
+
+def _strip_lines_above_figure_captions(text: str) -> str:
+    lines = text.split("\n")
+    out: list[str] = []
+    for ln in lines:
+        if _FIGURE_CAPTION_RE.match(ln.strip()):
+            while out and _is_figure_interior_line(out[-1]):
+                out.pop()
+            out.append(ln)
+        else:
+            out.append(ln)
+    return "\n".join(out)
 
 
 def _postprocess_markdown(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _sanitize_pdf_text(text)
     text = _strip_linenum_runs_text(text)
+    text = _strip_lines_above_figure_captions(text)
     text = _inject_headings(text)
     text = _wrap_code_blocks(text)
     text = _merge_paragraph_lines(text)
