@@ -33,6 +33,8 @@ async def finalize(session: Session, kb_id: str, tenant_id: int) -> None:
         from .synthesis import generate_comparisons, generate_synthesis
 
         await generate_synthesis(session, kb_id, tenant_id)
+        # 先注入互链，comparison 依赖 out_links 共现判定
+        await _inject_cross_links(session, kb_id)
         await generate_comparisons(session, kb_id, tenant_id)
 
         await _inject_cross_links(session, kb_id)
@@ -107,10 +109,16 @@ async def _rebuild_index_page(session: Session, kb_id: str, tenant_id: int) -> N
 
     index_page = (
         session.query(WikiPage)
-        .filter(WikiPage.knowledge_base_id == kb_id, WikiPage.kind == "index")
+        .filter(
+            WikiPage.knowledge_base_id == kb_id,
+            WikiPage.kind == "index",
+            WikiPage.deleted_at.is_(None),
+        )
+        .order_by(WikiPage.created_at)
         .first()
     )
 
+    fallback = "# 目录\n\n" + "\n".join(summaries[:50])
     try:
         if index_page and index_page.content:
             prompt = get_prompt("wiki", "WikiIndexIntroUpdatePrompt")
@@ -124,33 +132,35 @@ async def _rebuild_index_page(session: Session, kb_id: str, tenant_id: int) -> N
             return await client.chat(
                 [{"role": "system", "content": prompt}, {"role": "user", "content": user_msg}],
                 temperature=0.3,
-                max_tokens=1024,
+                max_tokens=4096,
                 purpose="wiki:generate_intro",
             )
 
         intro = await _call()
-
-        if index_page is None:
-            index_page = WikiPage(
-                page_id=uuid.uuid4().hex,
-                tenant_id=tenant_id,
-                knowledge_base_id=kb_id,
-                kind="index",
-                topic_key=f"{kb_id}:index:main",
-                title="Index",
-                slug="index/main",
-                content=intro,
-                summary="Knowledge base index",
-                status="published",
-                version=1,
-            )
-            session.add(index_page)
-        else:
-            index_page.content = intro
-
-        session.commit()
+        if not intro or not intro.strip():
+            intro = fallback
     except Exception:
-        pass
+        intro = fallback
+
+    if index_page is None:
+        index_page = WikiPage(
+            page_id=uuid.uuid4().hex,
+            tenant_id=tenant_id,
+            knowledge_base_id=kb_id,
+            kind="index",
+            topic_key=f"{kb_id}:index:main",
+            title="Index",
+            slug="index/main",
+            content=intro,
+            summary="Knowledge base index",
+            status="published",
+            version=1,
+        )
+        session.add(index_page)
+    else:
+        index_page.content = intro
+
+    session.commit()
 
 
 async def _assign_taxonomy(session: Session, kb_id: str) -> None:
@@ -179,7 +189,7 @@ async def _assign_taxonomy(session: Session, kb_id: str) -> None:
             return await client.chat(
                 [{"role": "system", "content": get_prompt("wiki", "WikiTaxonomyPlanPrompt")}, {"role": "user", "content": user_msg}],
                 temperature=0.0,
-                max_tokens=2048,
+                max_tokens=8192,
                 purpose="wiki:classify",
             )
 

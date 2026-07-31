@@ -115,7 +115,7 @@ async def _extract_candidates(client, source_text: str, granularity: str = "Stan
                 {"role": "user", "content": source_text},
             ],
             temperature=0.0,
-            max_tokens=4096,
+            max_tokens=16384,
             purpose="wiki:extract_candidates",
         )
 
@@ -177,7 +177,7 @@ async def _map_citations(
                             {"role": "user", "content": user_msg},
                         ],
                         temperature=0.0,
-                        max_tokens=2048,
+                        max_tokens=8192,
                         purpose="wiki:citation",
                     )
 

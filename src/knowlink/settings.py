@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     embedding_dims: int = 1024
     # 建库可选模型注册表：id → {model, dims}；当前全部走 llm_embed_base_url 单端点
     embedding_models: dict = {
-        "qwen3-embedding-4b": {"model": "Qwen/Qwen3-Embedding-0.6B", "dims": 1024},
+        "Qwen/Qwen3-Embedding-0.6B": {"model": "Qwen/Qwen3-Embedding-0.6B", "dims": 1024},
     }
     batch_embed_size: int = 5  # detail.md §嵌入
     embed_max_chars: int = 20000  # detail.md §嵌入

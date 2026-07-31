@@ -5,8 +5,10 @@ import logging
 import sys
 import time
 import uuid
+from datetime import datetime
 
 import structlog
+from structlog.dev import ConsoleRenderer
 
 trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default="")
 
@@ -32,6 +34,20 @@ def _add_trace_id(logger, method_name, event_dict):
     if tid:
         event_dict["trace_id"] = tid
     return event_dict
+
+
+def _time_level_renderer(logger, method_name, event_dict):
+    ts = event_dict.pop("timestamp", "")
+    level = event_dict.pop("level", method_name)
+    event = event_dict.pop("event", "")
+    styles = ConsoleRenderer.get_default_level_styles()
+    style = styles.get(level, "")
+    reset = "\x1b[0m"
+    line = f"[{style}{level}{reset} {ts}] {event}"
+    if event_dict:
+        kv = "  ".join(f"{k}={v!r}" for k, v in event_dict.items())
+        line = f"{line}  {kv}"
+    return line
 
 
 def bind_kb(kb_id: str, doc_id: str = "", kb_name: str = "", filename: str = "") -> None:
@@ -66,11 +82,9 @@ def setup_logging(level: str = "INFO") -> None:
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="%H:%M:%S", key="timestamp"),
             _add_trace_id,
-            structlog.dev.ConsoleRenderer(
-                pad_event=0,
-                level_styles=structlog.dev.ConsoleRenderer.get_default_level_styles(),
-            ),
+            _time_level_renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
         context_class=dict,

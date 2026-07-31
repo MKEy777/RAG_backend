@@ -14,7 +14,6 @@ from ..models.knowledge_base import KnowledgeBase
 from ..settings import settings
 from .dedup import dedup_candidates
 from .expansion import expand_queries
-from .faq import faq_search
 from .fusion import rrf_fusion
 from .graph_boost import graph_boost
 from .hybrid import Candidate, hybrid_search
@@ -26,7 +25,6 @@ log = get_logger("retrieval")
 @dataclass
 class RetrievalResult:
     hits: list[Candidate] = field(default_factory=list)
-    faq_hits: list[Candidate] = field(default_factory=list)
 
 
 # 三层解析兜底值：与历史行为一致（ARCHITECTURE.md §4.4）
@@ -128,28 +126,9 @@ async def retrieve_candidates(
         except Exception as e:
             log.warning("嵌入服务不可用_回退BM25", error=str(e))
 
-    faq_kbs: list[KnowledgeBase] = []
-    doc_kb_ids: list[str] = []
-    for kb_id in kb_ids:
-        kb = session.get(KnowledgeBase, kb_id)
-        if kb and kb.type == "faq":
-            faq_kbs.append(kb)
-        else:
-            doc_kb_ids.append(kb_id)
+    doc_kb_ids = list(kb_ids)
 
     result = RetrievalResult()
-
-    # FAQ 独立路径：不参与融合与 wiki 加权（detail.md §FAQ 检索方式）
-    if faq_kbs and query_vector is not None:
-        faq_tasks = []
-        for kb in faq_kbs:
-            tag_priority = (kb.faq_config or {}).get("tag_priority", [])
-            faq_tasks.append(faq_search(kb.id, query, query_vector, top_k, tag_priority))
-        for hits in await asyncio.gather(*faq_tasks, return_exceptions=True):
-            if isinstance(hits, Exception):
-                log.warning("FAQ检索失败", error=str(hits))
-                continue
-            result.faq_hits.extend(hits)
 
     pairs = await asyncio.gather(
         *[
@@ -230,22 +209,3 @@ async def retrieve_candidates(
     return result
 
 
-def enrich_faq_candidates(session: Session, faq_hits: list[Candidate]) -> list[Candidate]:
-    """FAQ 候选内容回填 Q/A（向量索引 metadata 无 answer，需回 DB 取）。"""
-    if not faq_hits:
-        return []
-    rows = (
-        session.query(Chunk)
-        .filter(Chunk.id.in_([h.chunk_id for h in faq_hits]), Chunk.enabled.is_(True))
-        .all()
-    )
-    by_id = {c.id: c for c in rows}
-    out: list[Candidate] = []
-    for h in faq_hits:
-        ck = by_id.get(h.chunk_id)
-        if ck is None:
-            continue
-        meta = ck.metadata_ or {}
-        h.content = f"Q: {meta.get('standard_question', ck.content)}\nA: {meta.get('answer', '')}"
-        out.append(h)
-    return out

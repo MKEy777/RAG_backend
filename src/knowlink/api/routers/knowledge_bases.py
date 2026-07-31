@@ -35,7 +35,7 @@ class KBCreate(BaseModel):
     description: str | None = None
     group_name: str | None = None
     icon: str | None = None
-    embedding_model_id: str = "qwen3-embedding-4b"
+    embedding_model_id: str = "Qwen/Qwen3-Embedding-0.6B"
     chunking_config: dict = {}
     indexing_strategy: dict = {}
     retrieval_config: RetrievalConfigModel | None = None

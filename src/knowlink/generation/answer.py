@@ -5,7 +5,7 @@ from typing import AsyncIterator
 
 from ..llm.client import get_llm_client
 from ..retrieval.hybrid import Candidate
-from .citations import CITATION_PROTOCOL, build_references
+from .citations import CITATION_PROTOCOL, build_references, extract_cited_ids
 from .context import build_context_xml
 from .suggestions import generate_suggestions
 
@@ -32,7 +32,6 @@ async def generate_answer_stream(
         return
 
     context = build_context_xml(candidates)
-    references = build_references(candidates)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if history:
@@ -58,6 +57,8 @@ async def generate_answer_stream(
         if items:
             yield _sse_event("suggestions", {"suggestions": items})
 
+    cited_ids = extract_cited_ids("".join(answer_parts))
+    references = build_references(candidates, cited_ids or None)
     yield _sse_event("references", {"references": references})
     yield _sse_event("done", {})
 
@@ -71,7 +72,6 @@ async def generate_answer(
         return {"answer": NO_ANSWER_MSG, "references": []}
 
     context = build_context_xml(candidates)
-    references = build_references(candidates)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if history:
@@ -87,6 +87,8 @@ async def generate_answer(
     except Exception:
         answer = NO_ANSWER_MSG
 
+    cited_ids = extract_cited_ids(answer)
+    references = build_references(candidates, cited_ids or None)
     return {"answer": answer, "references": references}
 
 

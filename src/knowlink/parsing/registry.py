@@ -27,11 +27,12 @@ def register(ext: str):
 def detect_format(data: bytes, filename: str) -> str:
     if data[:8] == OLE_MAGIC:
         ext = Path(filename).suffix.lower()
-        if ext == ".docx":
+        # OLE 复合文档：老版 .doc/.ppt/.xls，或后缀为新格式但实为 OLE 的文件
+        if ext in (".doc", ".docx"):
             return "doc"
-        if ext == ".pptx":
+        if ext in (".ppt", ".pptx"):
             return "ppt"
-        if ext in (".xlsx", ".xls"):
+        if ext in (".xls", ".xlsx"):
             return "xls"
         return "ole"
     if data[:4] == PDF_MAGIC:

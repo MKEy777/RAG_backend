@@ -113,7 +113,7 @@ async def dedup_candidates(session, kb_id: str, candidates: list[dict]) -> dict[
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.0,
-            max_tokens=2048,
+            max_tokens=8192,
             purpose="wiki:dedup",
         )
 

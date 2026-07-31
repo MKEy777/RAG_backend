@@ -88,6 +88,12 @@ async def run_indexing_pipeline(
         session.rollback()
         log.error("索引管线失败_回滚", knowledge_id=knowledge_id, kb_id=kb_id, error=str(e))
         if new_ids:
+            # chunks 已提交入库，需软删补偿
+            session.execute(
+                update(Chunk)
+                .where(Chunk.id.in_(new_ids))
+                .values(deleted_at=datetime.now(timezone.utc))
+            )
             await storage.vector.delete_chunks(kb_id, new_ids)
             await storage.keyword.delete_chunks(kb_id, new_ids)
         session.execute(
@@ -150,7 +156,8 @@ async def _index_parent_child(
             pre_id = child_id
             session.add(child_chunk)
 
-    session.flush()
+    # 先提交 chunks 释放 SQLite 写锁，再做耗时的嵌入，避免长事务持锁导致并发上传 database is locked
+    session.commit()
 
     if child_texts:
         vectors = await embed_texts(child_texts)
@@ -197,7 +204,8 @@ async def _index_flat(
         pre_id = chunk_id
         session.add(chunk)
 
-    session.flush()
+    # 先提交 chunks 释放 SQLite 写锁，再做耗时的嵌入
+    session.commit()
 
     if texts:
         vectors = await embed_texts(texts)

@@ -5,10 +5,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ...logging import get_logger
 from ...models.database import get_session
+from ...models.chunk import Chunk
+from ...models.knowledge import Knowledge
 from ...models.wiki import WikiFolder, WikiPage, WikiPendingOperation
 
 log = get_logger("wiki")
@@ -29,14 +32,17 @@ def build_index_payload(session: Session, kb_id: str) -> dict:
         .all()
     )
     if not pages:
-        return {"intro": "", "groups": [], "folders": []}
+        return {"intro": "", "overview": "", "groups": [], "folders": [], "graph": {"nodes": [], "edges": []}}
 
     intro = ""
+    overview = ""
     by_kind: dict[str, list[WikiPage]] = {}
     for p in pages:
         if p.kind == "index":
             intro = p.content or ""
             continue
+        if p.kind == "overview" and not overview:
+            overview = p.content or ""
         by_kind.setdefault(p.kind, []).append(p)
 
     groups = []
@@ -53,6 +59,16 @@ def build_index_payload(session: Session, kb_id: str) -> dict:
             ],
         })
 
+    # 关系图谱：页面为节点，out_links 为有向边
+    slug_set = {p.slug for p in pages}
+    nodes = [{"id": p.slug, "name": p.title, "kind": p.kind} for p in pages]
+    edges = []
+    for p in pages:
+        for target in (p.out_links or []):
+            if target in slug_set and target != p.slug:
+                edges.append({"source": p.slug, "target": target})
+    graph = {"nodes": nodes, "edges": edges}
+
     folder_rows = session.query(WikiFolder).filter(WikiFolder.knowledge_base_id == kb_id).all()
     page_counts: dict[str, int] = {}
     for p in pages:
@@ -62,7 +78,7 @@ def build_index_payload(session: Session, kb_id: str) -> dict:
         {"id": f.id, "name": f.name, "parent_id": f.parent_id, "page_count": page_counts.get(f.id, 0)}
         for f in folder_rows
     ]
-    return {"intro": intro, "groups": groups, "folders": folders}
+    return {"intro": intro, "overview": overview, "groups": groups, "folders": folders, "graph": graph}
 
 
 @router.get("/{kb_id}/index")
@@ -137,6 +153,41 @@ def list_wiki_pages(
     }
 
 
+@router.get("/{kb_id}/faq")
+def list_wiki_faq(
+    kb_id: str,
+    session: Session = Depends(get_session),
+):
+    # wiki 自动生成的 FAQ 问句切片，按来源文档分组返回
+    chunks = (
+        session.query(Chunk)
+        .filter(
+            Chunk.knowledge_base_id == kb_id,
+            Chunk.chunk_type == "faq",
+            Chunk.deleted_at.is_(None),
+        )
+        .order_by(Chunk.knowledge_id)
+        .all()
+    )
+    kids = {c.knowledge_id for c in chunks}
+    titles = {
+        k.id: (k.title or k.file_name or "未命名文档")
+        for k in session.query(Knowledge).filter(Knowledge.id.in_(kids)).all()
+    } if kids else {}
+    grouped: dict[str, dict] = {}
+    for c in chunks:
+        g = grouped.setdefault(
+            c.knowledge_id,
+            {"knowledge_id": c.knowledge_id, "title": titles.get(c.knowledge_id, "未命名文档"), "questions": []},
+        )
+        g["questions"].append({
+            "id": c.id,
+            "question": c.content,
+            "source_chunk_id": (c.metadata_ or {}).get("source_chunk_id"),
+        })
+    return {"groups": list(grouped.values()), "total": len(chunks)}
+
+
 @router.get("/{kb_id}/pages/{page_id}")
 def get_wiki_page(
     kb_id: str,
@@ -203,7 +254,27 @@ def wiki_status(kb_id: str, session: Session = Depends(get_session)):
         )
         .count()
     )
-    return {"page_count": page_count, "pending_count": pending_count}
+    total_operations = (
+        session.query(WikiPendingOperation)
+        .filter(WikiPendingOperation.knowledge_base_id == kb_id)
+        .count()
+    )
+    last_updated = (
+        session.query(func.max(WikiPage.updated_at))
+        .filter(
+            WikiPage.knowledge_base_id == kb_id,
+            WikiPage.deleted_at.is_(None),
+        )
+        .scalar()
+    )
+    return {
+        "page_count": page_count,
+        "pending_count": pending_count,
+        "total_operations": total_operations,
+        "completed_operations": max(total_operations - pending_count, 0),
+        "building": pending_count > 0,
+        "last_updated": last_updated.isoformat() if last_updated else None,
+    }
 
 
 class PageUpdateBody(BaseModel):

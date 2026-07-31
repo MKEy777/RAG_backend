@@ -32,7 +32,7 @@ async def main():
         tenant_id=1,
         name="e2e-test-kb",
         type="document",
-        embedding_model_id="qwen3-embedding-4b",
+        embedding_model_id="Qwen/Qwen3-Embedding-0.6B",
         chunking_config={"strategy": "auto"},
         indexing_strategy={"vector": True, "keyword": True},
     )

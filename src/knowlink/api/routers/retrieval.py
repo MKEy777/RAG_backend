@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ...logging import get_logger
 from ...models.database import get_session
 from ...models.retrieval_test import RetrievalTest
-from ...retrieval.pipeline import enrich_faq_candidates, retrieve_candidates
+from ...retrieval.pipeline import retrieve_candidates
 from ...settings import settings
 
 log = get_logger("retrieval_api")
@@ -61,7 +61,6 @@ class RetrievalHit(BaseModel):
 
 class RetrievalResponse(BaseModel):
     hits: list[RetrievalHit]
-    faq_hits: list[RetrievalHit] = []
 
 
 def _save_test_history(session: Session, body: RetrievalRequest, hit_count: int, top_score: float | None, duration_ms: int) -> None:
@@ -121,20 +120,11 @@ async def retrieve(body: RetrievalRequest, session: Session = Depends(get_sessio
         for c in result.hits
     ]
 
-    faq_out = [
-        RetrievalHit(
-            chunk_id=h.chunk_id, score=h.score, channel="faq", chunk_type="faq",
-            title_path="", document_id=h.document_id,
-            content=h.content[:500],
-        )
-        for h in enrich_faq_candidates(session, result.faq_hits)
-    ]
-
     if body.save_history:
-        top_score = hits[0].score if hits else (faq_out[0].score if faq_out else None)
-        _save_test_history(session, body, len(hits) + len(faq_out), top_score, duration_ms)
+        top_score = hits[0].score if hits else None
+        _save_test_history(session, body, len(hits), top_score, duration_ms)
 
-    return RetrievalResponse(hits=hits, faq_hits=faq_out)
+    return RetrievalResponse(hits=hits)
 
 
 @router.get("/history")

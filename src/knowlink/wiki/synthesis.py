@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+import re
 import uuid
 from collections import Counter
 from itertools import combinations
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..llm.client import get_llm_client
@@ -47,6 +50,22 @@ def _upsert_page(
     session.commit()
 
 
+def _parse_synthesis_pages(resp: str) -> list[dict]:
+    """解析 LLM 返回的多主题综览 JSON；兼容 ```json 包裹。"""
+    text = resp.strip()
+    m = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
+    if m:
+        text = m.group(1).strip()
+    try:
+        data = json.loads(text)
+    except Exception:
+        return []
+    pages = data.get("pages") if isinstance(data, dict) else data
+    if not isinstance(pages, list):
+        return []
+    return [p for p in pages if isinstance(p, dict) and (p.get("content") or "").strip()]
+
+
 async def generate_synthesis(session: Session, kb_id: str, tenant_id: int) -> None:
     kb = session.get(KnowledgeBase, kb_id)
     model = ((kb.wiki_config or {}).get("synthesis_model") or "").strip() if kb else ""
@@ -81,14 +100,25 @@ async def generate_synthesis(session: Session, kb_id: str, tenant_id: int) -> No
                 ],
                 model=model,
                 temperature=0.3,
-                max_tokens=4096,
+                max_tokens=8192,
                 purpose="wiki:synthesis",
             )
 
-        summary, content = _split_summary(await _call())
-        if content:
-            _upsert_page(session, kb_id, tenant_id, "synthesis/overview", "synthesis",
-                         "领域综览", content, summary)
+        result = _parse_synthesis_pages(await _call())
+        if not result:
+            return
+        # 软删除旧的 synthesis 页，再按主题重建
+        session.query(WikiPage).filter(
+            WikiPage.knowledge_base_id == kb_id,
+            WikiPage.kind == "synthesis",
+            WikiPage.deleted_at.is_(None),
+        ).update({WikiPage.deleted_at: func.now()}, synchronize_session=False)
+        for i, p in enumerate(result, 1):
+            _upsert_page(
+                session, kb_id, tenant_id, f"synthesis/topic-{i}", "synthesis",
+                (p.get("title") or f"领域综览 {i}").strip(),
+                (p.get("content") or "").strip(), (p.get("summary") or "").strip(),
+            )
     except Exception:
         pass
 

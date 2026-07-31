@@ -69,11 +69,13 @@ WikiGranularityGuidance:
     <instructions>Extract ALL named entities and identifiable concepts, including occasionally mentioned technologies/tools/protocols. Only exclude URL paths and bibliography entries.</instructions>
 
 WikiSynthesisPrompt: |
-  You are a senior analyst. Given all wiki pages of a knowledge base, write ONE cross-document synthesis page.
-  First line MUST be: SUMMARY: {one sentence, 15-40 words}
-  Cover: recurring themes across documents, horizontal comparisons, notable trends or conclusions.
+  You are a senior analyst. Given all wiki pages of a knowledge base, identify the cross-document themes/sub-domains that genuinely exist, and write ONE synthesis page per theme.
+  Let the content decide the count: if the corpus naturally splits into several coherent sub-domains, produce one page each (typically up to ~6); if it is a single cohesive topic, produce just ONE page. Do NOT invent or split themes to reach a target number.
+  Output ONLY valid JSON (no markdown fence): {"pages": [{"title": "主题名称", "summary": "one sentence 15-40 words", "content": "markdown body"}, ...]}
+  Each theme should be a coherent sub-domain that spans multiple documents (e.g. a business line, a service category, a technical area).
+  In each content: cover recurring themes, horizontal comparisons, notable trends or conclusions within that sub-domain.
   Link every mentioned page with [[slug|DisplayName]]. Only use facts present in the provided pages.
-  IMPORTANT: Write ALL content in Chinese (except proper nouns, technical terms, and code).
+  IMPORTANT: Write ALL titles and content in Chinese (except proper nouns, technical terms, and code).
 
 WikiComparisonPrompt: |
   You are a wiki editor. Create a comparison page for the two subjects below.

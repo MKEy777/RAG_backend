@@ -17,6 +17,7 @@ class GraphNode(BaseModel):
     description: str
     frequency: int
     degree: int
+    belongs: bool = True
 
 
 class GraphEdge(BaseModel):
@@ -24,6 +25,7 @@ class GraphEdge(BaseModel):
     target: str
     description: str
     weight: float
+    belongs: bool = True
 
 
 class GraphStats(BaseModel):
@@ -121,7 +123,7 @@ async def delete_graph(kb_id: str):
 
 
 @router.get("/{kb_id}")
-def get_graph(kb_id: str, limit: int = 300):
+def get_graph(kb_id: str, limit: int = 300, knowledge_id: str | None = None):
     snapshot_path = settings.object_storage_root / "graphs" / f"{kb_id}.json"
 
     if not snapshot_path.exists():
@@ -153,6 +155,27 @@ def get_graph(kb_id: str, limit: int = 300):
     raw_entities = data.get("entities", {})
     raw_relations = data.get("relations", [])
 
+    # 指定文档时，取其 chunk 集合用于判定节点/边归属（高亮）
+    doc_chunk_ids: set[str] | None = None
+    if knowledge_id:
+        from ...models.chunk import Chunk
+        from ...models.database import SessionLocal
+
+        session = SessionLocal()
+        try:
+            rows = (
+                session.query(Chunk.id)
+                .filter(
+                    Chunk.knowledge_base_id == kb_id,
+                    Chunk.knowledge_id == knowledge_id,
+                    Chunk.deleted_at.is_(None),
+                )
+                .all()
+            )
+            doc_chunk_ids = {r[0] for r in rows}
+        finally:
+            session.close()
+
     cap = min(max(limit, 1), 1000)
     sorted_entities = sorted(
         raw_entities.values(),
@@ -163,6 +186,11 @@ def get_graph(kb_id: str, limit: int = 300):
     selected = sorted_entities[:cap]
     selected_names = {e["name"] for e in selected}
 
+    def _belongs(chunk_ids: list[str]) -> bool:
+        if doc_chunk_ids is None:
+            return True
+        return any(cid in doc_chunk_ids for cid in chunk_ids)
+
     nodes = [
         GraphNode(
             name=e["name"],
@@ -170,6 +198,7 @@ def get_graph(kb_id: str, limit: int = 300):
             description=e.get("description", ""),
             frequency=e.get("frequency", 0),
             degree=e.get("in_degree", 0) + e.get("out_degree", 0),
+            belongs=_belongs(e.get("source_chunk_ids", [])),
         )
         for e in selected
     ]
@@ -180,6 +209,7 @@ def get_graph(kb_id: str, limit: int = 300):
             target=r["target"],
             description=r.get("description", ""),
             weight=r.get("weight", 1.0),
+            belongs=_belongs(r.get("source_chunk_ids", [])),
         )
         for r in raw_relations
         if r.get("source") in selected_names and r.get("target") in selected_names

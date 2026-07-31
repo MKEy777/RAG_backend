@@ -10,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 from ...generation.answer import generate_answer, generate_answer_stream
 from ...models.chat import ChatMessage, ChatSession
 from ...models.database import get_session
-from ...retrieval.pipeline import enrich_faq_candidates, retrieve_candidates
+from ...retrieval.pipeline import retrieve_candidates
 from ...retrieval.rewrite import rewrite_query
 from ...settings import settings
 
@@ -46,7 +46,7 @@ async def chat(body: ChatRequest, session: Session = Depends(get_session)):
         enable_wiki_boost=body.enable_wiki_boost,
         endpoint_defaults={"enable_graph": True, "enable_wiki_boost": False},
     )
-    candidates = enrich_faq_candidates(session, result.faq_hits) + result.hits
+    candidates = result.hits
 
     if body.stream:
         async def event_gen():
