@@ -857,6 +857,7 @@ async def download_document(doc_id: str, session: Session = Depends(get_session)
 
 @router.post("/{doc_id}/reparse")
 async def reparse_document(doc_id: str, session: Session = Depends(get_session)):
+    from ...fastpath.cache import mark_entries_stale_for_document
     from ...storage.factory import get_storage
 
     doc = session.get(Knowledge, doc_id)
@@ -877,6 +878,7 @@ async def reparse_document(doc_id: str, session: Session = Depends(get_session))
     doc.error_message = None
     session.commit()
 
+    mark_entries_stale_for_document(session, doc_id)
     filename = meta.get("original_filename") or doc.file_name or "file"
     _dispatch_processing(kb, doc.id, data, filename)
     log.info("重新解析已触发", doc_id=doc.id, filename=filename)
@@ -887,7 +889,7 @@ async def reparse_document(doc_id: str, session: Session = Depends(get_session))
 async def delete_document(doc_id: str, session: Session = Depends(get_session)):
     from datetime import timezone
 
-    from sqlalchemy import update
+    from sqlalchemy import select, update
 
     from ...graph.builder import get_graph_manager
     from ...models.chunk import Chunk
@@ -898,12 +900,25 @@ async def delete_document(doc_id: str, session: Session = Depends(get_session)):
         raise HTTPException(404, "Document not found")
     now = datetime.now(timezone.utc)
     doc.deleted_at = now
+    live_chunk_ids = list(
+        session.execute(
+            select(Chunk.id).where(Chunk.knowledge_id == doc_id, Chunk.deleted_at.is_(None))
+        ).scalars()
+    )
     session.execute(
         update(Chunk)
         .where(Chunk.knowledge_id == doc_id, Chunk.deleted_at.is_(None))
         .values(deleted_at=now)
     )
     session.commit()
+
+    from ...fastpath.cache import (
+        invalidate_cache_for_chunks,
+        mark_entries_stale_for_chunks,
+    )
+
+    mark_entries_stale_for_chunks(session, live_chunk_ids)
+    invalidate_cache_for_chunks(session, live_chunk_ids)
 
     kb_id = doc.knowledge_base_id
     storage = get_storage()
@@ -1017,6 +1032,10 @@ async def _reindex_chunk(chunk) -> None:
 
 @router.put("/{doc_id}/chunks/{chunk_id}")
 async def update_chunk(doc_id: str, chunk_id: str, body: ChunkUpdateBody, session: Session = Depends(get_session)):
+    from ...fastpath.cache import (
+        invalidate_cache_for_chunks,
+        mark_entries_stale_for_chunks,
+    )
     from ...indexing.embedder import content_hash
     from ...models.chunk import Chunk
     from ...storage.factory import get_storage
@@ -1033,6 +1052,10 @@ async def update_chunk(doc_id: str, chunk_id: str, body: ChunkUpdateBody, sessio
     if body.enabled is not None:
         chunk.enabled = body.enabled
     session.commit()
+
+    if body.content is not None:
+        mark_entries_stale_for_chunks(session, [chunk_id])
+        invalidate_cache_for_chunks(session, [chunk_id])
 
     if chunk.chunk_type == "parent_text":
         return {"status": "updated", "enabled": chunk.enabled}
@@ -1055,6 +1078,10 @@ async def update_chunk(doc_id: str, chunk_id: str, body: ChunkUpdateBody, sessio
 async def delete_chunk(doc_id: str, chunk_id: str, session: Session = Depends(get_session)):
     from datetime import datetime, timezone
 
+    from ...fastpath.cache import (
+        invalidate_cache_for_chunks,
+        mark_entries_stale_for_chunks,
+    )
     from ...models.chunk import Chunk
     from ...storage.factory import get_storage
 
@@ -1063,6 +1090,8 @@ async def delete_chunk(doc_id: str, chunk_id: str, session: Session = Depends(ge
         raise HTTPException(404, "Chunk not found")
     chunk.deleted_at = datetime.now(timezone.utc)
     session.commit()
+    mark_entries_stale_for_chunks(session, [chunk_id])
+    invalidate_cache_for_chunks(session, [chunk_id])
     storage = get_storage()
     await storage.vector.delete_chunks(chunk.knowledge_base_id, [chunk_id])
     await storage.keyword.delete_chunks(chunk.knowledge_base_id, [chunk_id])

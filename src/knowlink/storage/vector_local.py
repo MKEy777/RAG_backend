@@ -136,6 +136,15 @@ class LocalVectorStore:
 
         await asyncio.to_thread(_do)
 
+    async def list_ids(self, kb_id: str) -> list[str]:
+        """列出 kb 命名空间下全部向量 id（管理运维用）。"""
+
+        def _do() -> list[str]:
+            self._load_kb(kb_id)
+            return list(self._indices.get(kb_id, {}).keys())
+
+        return await asyncio.to_thread(_do)
+
     async def reconcile(self, kb_id: str, live_meta: dict[str, dict]) -> int:
         """以 DB 为准对账：移除死块向量，回填历史缺失的 metadata（meta 早期未落盘）。"""
         def _do() -> int:

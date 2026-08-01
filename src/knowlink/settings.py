@@ -70,6 +70,18 @@ class Settings(BaseSettings):
     # chat
     chat_history_rounds: int = 5
 
+    # fastpath（快路径三层：L0 规则命中 / L1 语义缓存 / L2 完整链路）
+    fastpath_enabled: bool = True
+    fastpath_match_threshold: float = 0.88  # L0 语义匹配余弦阈值
+    fastpath_fill_max_tokens: int = 800  # 模板变量取数 LLM 上限
+    cache_enabled: bool = True
+    cache_similarity_threshold: float = 0.92  # L1 语义缓存命中阈值
+    cache_ttl_s: int = 7 * 86400  # 缓存 TTL（7 天）
+    cache_max_entries_per_kb: int = 500  # 单 kb_key 缓存上限（LRU 淘汰）
+    mining_min_cluster_size: int = 3  # 挖掘聚类最小簇大小
+    mining_cluster_threshold: float = 0.85  # 挖掘聚类余弦阈值
+    fastpath_stats_history: int = 500  # fast_path_hits 保留条数
+
     # wiki
     wiki_debounce_ingest_s: int = 30  # detail.md Wiki §步骤1
     wiki_debounce_followup_s: int = 5  # detail.md Wiki §步骤1

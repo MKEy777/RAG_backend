@@ -319,3 +319,52 @@
 3. `layouts/MainLayout.vue`:侧边栏「知识库」下方新增缩进子项「知识 Wiki」「知识图谱」,收起态取消缩进。
 
 **作用**:提供全局 Wiki/图谱入口,先选知识库再查看对应内容。
+
+---
+
+## 23. 快路径（fastpath）三层路由 + 语义缓存 + 管理界面
+
+**背景**:高频重复问题每次仍走完整检索+生成链路(耗时数秒)。为常见问答建立"先命中、后生成"的快路径,命中时毫秒级返回。
+
+**架构**:聊天入口在 rewrite 之后、retrieve_candidates 之前插入三层路由(见 `docs/ARCHITECTURE.md` §4.9):
+- L0 快路径命中(~50ms-1s):`fastpath/matcher.py` 归一化精确匹配(去空白/标点/NFKC/小写,零嵌入开销)→ 向量语义匹配(阈值 `fastpath_match_threshold=0.88`);命中条目含 `{var}` 时 `fastpath/filler.py` 用目标 chunk 动态取数填充模板(任一变量缺失→落 L2 不写死答案)。
+- L1 语义缓存(~150-300ms):`fastpath/cache.py`,`semantic_cache_entries` 表 + `sc_{kb_key}` 向量命名空间,写穿缓存有引用且源 chunk 存活的答案;命中校验全部源 chunk `content_hash` 未变,任一变更即失效;TTL 7d、每库上限 500 条 LRU。
+- L2 现有完整链路(不变),成功后后台写穿缓存(`write_cache_background` 独立 session,不阻塞 SSE)。
+
+**后端**:
+1. `migrations/versions/0006_fastpath.py`(新增):`fast_path_entries`、`semantic_cache_entries`、`fast_path_hits` 三张表。
+2. `models/fastpath.py`(新增):`FastPathEntry`/`SemanticCacheEntry`/`FastPathHit` 模型;`models/__init__.py` 注册。
+3. `fastpath/`(新增):`matcher.py`/`filler.py`/`cache.py`/`mining.py`/`service.py`。`mining.py` 离线挖掘:`chat_messages`+`retrieval_tests` 问句贪心聚类(阈值 0.85,簇≥3)→ 跑完整检索定位 → LLM 生成模板 → `status=draft` 待审核。
+4. `api/routers/fastpath.py`(新增):条目 CRUD/启停/激活(激活时嵌问法向量到 `fp_{kb_id}`)、FAQ 候选列表 + 一键升级(`POST /{kb_id}/promote`)、挖掘(`POST /{kb_id}/mine`)、命中统计、缓存列表/清除。
+5. `api/app.py`:注册 fastpath 路由。`api/routers/chat.py`:chat 快路径命中时新增 SSE `via` 事件(`{"via":"fastpath"|"cache"}`)前置。
+6. `retrieval/pipeline.py`、`api/routers/retrieval.py`:fastpath 编排接入与历史命中记录。
+7. `settings.py`:新增 `fastpath_match_threshold`/`fastpath_fill_max_tokens`/`cache_ttl_s`/`cache_max_entries_per_kb`/`mining_*` 等配置。
+8. `storage/vector_local.py`:`fp_{kb_id}`/`sc_{kb_key}` 命名空间支持。`metrics.py`:`knowlink_fastpath_hits_total{layer}` + `knowlink_fastpath_duration_seconds{layer}`。
+9. `api/routers/documents.py`:reparse/delete 文档时 `mark_entries_stale_for_document`/`invalidate_cache_for_chunks` 使相关快路径条目与缓存失效。
+10. `config/prompts/fastpath.yaml`(新增):变量抽取(`variable_extraction`)与模板生成(`template_generation`)提示词。
+11. `tests/test_fastpath_*.py`(新增 6 个):matcher/cache/mining/fill/API/chat 集成测试。
+
+**前端**:
+1. `api/fastpath.ts`(新增):`FastPathEntry`/`FaqCandidate` 等类型及条目/候选/挖掘/统计/缓存接口。
+2. `views/FastPath/FastPathView.vue`(新增):快路径条目管理界面(列表/启停/激活/升级/挖掘/缓存清除/命中看板)。
+3. `api/chat.ts`、`composables/useChatStream.ts`、`stores/chat.ts`、`components/chat/ChatMessage.vue`:解析 `via` 事件,快路径命中时聊天消息显示命中标记。
+4. `router/index.ts`、`layouts/MainLayout.vue`:新增「快路径」管理路由与侧边栏入口。
+
+**验证**:聊天/检索高频问题命中后返回毫秒级;写穿缓存源 chunk 变更后自动失效重生成。
+
+---
+
+## 24. 检索测试历史记录显示 P50/P99 延迟分位数
+
+**背景**:检索测试页「测试历史」只展示总耗时与命中数,无法判断单次检索中候选排名的延迟分布,排查慢请求困难。
+
+**后端**:
+1. `models/retrieval_test.py`:`RetrievalTest` 新增 `latency_p50_ms`/`latency_p99_ms`(Float, nullable)。
+2. `migrations/versions/0007_retrieval_test_latency.py`(新增):`retrieval_tests` 表加两列。
+3. `api/routers/retrieval.py`:`_save_test_history` 写入当次检索后按 `latency_samples` 计算的滚动 P50/P99(毫秒,四舍五入到 1 位小数);`GET /retrieval/history` 列表返回 `latency_p50_ms`/`latency_p99_ms`。
+
+**前端**:
+1. `api/retrieval.ts`:`RetrievalHistoryItem` 新增 `latency_p50_ms?`/`latency_p99_ms?`。
+2. `views/Retrieval/TestView.vue`:历史记录行内显示 `P50 xx ms · P99 xx ms`(旧记录无分位数自动省略)。
+
+**作用**:每条检索历史可直接看到 P50/P99 延迟分位,便于定位检索管线瓶颈。

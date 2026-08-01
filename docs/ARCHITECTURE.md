@@ -116,6 +116,27 @@ knowlink/
 - **图谱增强**：查询实体抽取 → 图谱找相关 chunk → 并入候选去重（一跳 + 两跳，衰减 0.5）
 - **返回结构**：`Candidate` 必须保留 chunk_id / score / 来源通道 / chunk_type / 标题路径 / document_id，不能过早降级为纯文本
 
+### 4.9 快路径（fastpath/，迁移 0006）
+
+**三层路由**（chat 入口，rewrite 之后、retrieve_candidates 之前）：L0 快路径命中（~50ms-1s，模板+动态取数）→ L1 语义缓存命中（~150-300ms，源 chunk 校验复用）→ L2 现有完整链路（不变，成功后后台写穿缓存）。
+
+| 组件 | 职责 |
+|---|---|
+| `fastpath/matcher.py` | L0 匹配：归一化精确匹配（去空白/标点/NFKC/小写，零嵌入开销）→ 向量语义匹配（阈值 `fastpath_match_threshold=0.88`，top3 取最优）；目标 chunk/文档已删时顺手置 `stale` |
+| `fastpath/filler.py` | 模板填充：模板含 `{var}` 时小 LLM 从目标 chunk 动态取数（`fastpath_fill_max_tokens=800`）；任一变量缺失→返回 None 落 L2（对应坑06：不写死答案）；`generate_template_from_chunk` 为 FAQ 升级/挖掘共用 |
+| `fastpath/cache.py` | L1 语义缓存：`semantic_cache_entries` 表 + 向量命名空间 `sc_{kb_key}`；写穿仅缓存有引用且源 chunk 存活的答案；命中校验全部源 chunk 的 `content_hash` 未变，任一变更即失效（避免答非所问）；TTL `cache_ttl_s=7d`；超限 LRU 淘汰（`cache_max_entries_per_kb=500`）；失效钩子 `invalidate_cache_for_chunks` / `mark_entries_stale_for_chunks` / `mark_entries_stale_for_document` |
+| `fastpath/mining.py` | 离线挖掘：`chat_messages`(user) + `retrieval_tests` 问句 → 贪心聚类（阈值 `mining_cluster_threshold=0.85`）→ 簇≥`mining_min_cluster_size=3` → 跑完整 `retrieve_candidates` 定位 → LLM 生成模板 → `status=draft` 入库待人工审核 |
+| `fastpath/service.py` | 编排 L0→L1；`record_hit` 写 `fast_path_hits` 命中日志（看板+未来挖掘源，上限 `fastpath_stats_history=500` LRU 裁剪）；`write_cache_background` 独立 session 后台写穿，不阻塞 SSE 关闭 |
+| `api/routers/fastpath.py` | 管理 API：条目 CRUD/启停/激活（激活时嵌入问法向量到 `fp_{kb_id}` 命名空间，id 形如 `{entry_id}:{i}`）、FAQ 候选列表 + 一键升级（`POST /{kb_id}/promote`）、挖掘（`POST /{kb_id}/mine`）、命中统计、缓存列表/清除、stale 手动接口 |
+
+**数据模型**（迁移 0006）：`fast_path_entries`（canonical_query/example_queries/answer_template/variables/target_chunk_id/target_document_id/status=active·draft·disabled·stale/source=faq·manual·mined/source_chunk_id/hit_count）、`semantic_cache_entries`（kb_key/query_text/answer_text/references/source_chunk_ids/source_chunk_hashes/expires_at）、`fast_path_hits`（layer=exact·semantic·cache·miss/entry_id/query/similarity/duration_ms）。
+
+**失效钩子**：文档删除/重解析（`documents.py`）→ 相关条目置 `stale` + 引用其 chunk 的缓存失效；chunk 编辑/删除（PUT/DELETE `/documents/{id}/chunks/{id}`）→ 同上。
+
+**SSE 扩展**：快路径命中时新增 `via` 事件（`{"via": "fastpath"|"cache"}`）前置，前端 ChatMessage 显示命中标记；`message`/`references`/`done` 事件格式不变。
+
+**Metrics**：`knowlink_fastpath_hits_total{layer}` 计数 + `knowlink_fastpath_duration_seconds{layer}` 直方图。
+
 ### 4.5 生成（generation/）
 
 - 父子块展开：text→parent_text（仅生成阶段，不影响向量检索）
@@ -287,6 +308,13 @@ class GraphStore(Protocol):
 | Wiki 防抖                    | 30s / 5s / 20s                  | detail.md §Wiki     |
 | Wiki 死信                    | 5 次                            | detail.md §Wiki     |
 | Wiki LLM 重试                | 3 次，2s 起                     | detail.md §Wiki     |
+| 快路径语义匹配阈值           | 0.88                            | ARCHITECTURE.md §4.9 |
+| 快路径取数 max_tokens        | 800                             | ARCHITECTURE.md §4.9 |
+| 语义缓存相似度阈值           | 0.92                            | ARCHITECTURE.md §4.9 |
+| 语义缓存 TTL                 | 7 天                            | ARCHITECTURE.md §4.9 |
+| 语义缓存每 kb_key 上限       | 500（LRU 淘汰）                 | ARCHITECTURE.md §4.9 |
+| 挖掘聚类阈值 / 最小簇大小    | 0.85 / 3                        | ARCHITECTURE.md §4.9 |
+| 命中日志保留条数             | 500                             | ARCHITECTURE.md §4.9 |
 
 ## 七、依赖清单
 
@@ -345,6 +373,7 @@ class GraphStore(Protocol):
 | 2026-07-27 | 元数据与列表体验（§4.8 扩展列,迁移 0004）：KB 新增 group_name/icon 列 + 分组列表/搜索/排序/LLM 图标建议接口 + doc_count/total_size/chunk_count 聚合;文档新增 tags/uploaded_by/authority 列 + 列表 keyword/status/tag/file_type 筛选与排序 + 上传/导入/PATCH 暴露对应字段 | models/{knowledge_base,knowledge}.py、api/routers/{knowledge_bases,documents}.py、migrations/0004 |
 | 2026-07-27 | 检索配置持久化+Chunk启停+命中历史（§4.4/§4.8,迁移 0005）：KB.retrieval_config 三层解析（请求>KB>settings）+ search_mode 三选一（hybrid/vector/fulltext,单通道 RRF 退化直通）;Chunk.enabled 启停（禁用物理清索引,reconcile/图谱/父块展开/FAQ 四处贯穿）;retrieval_tests 命中历史表 + history API;authority ×1.2 加权;chat 同步走 KB 配置 | retrieval/{pipeline,hybrid,rerank_stage}.py、api/routers/{retrieval,chat,documents,knowledge_bases}.py、models/{knowledge_base,chunk,retrieval_test}.py、indexing/reconcile.py、generation/context.py、settings.py、migrations/0005 |
 | 2026-07-27 | 解析/分段配置化（零新列,接线已有通路）：上传 API 暴露 parse_config（use_ocr/use_vlm,默认取 kb.image_processing_config,首次读取该列）与 chunking_config（strategy/chunk_size/chunk_overlap/separators,默认取 kb.chunking_config）;enrich_markdown_with_images/process_image_cascade 透传解析开关;recursive 分段支持自定义 separators 并贯通 chunk_document/索引管线/chunk-preview;settings 新增 embedding_models 注册表 + 建库校验 + GET /knowledge-bases/embedding-models;文档级 wiki_enabled（metadata 标志,wiki 组批过滤,PATCH 暴露） | api/routers/{documents,knowledge_bases}.py、indexing/{image_pipeline,pipeline}.py、chunking/__init__.py、tasks/parse_tasks.py、wiki/build.py、models/knowledge.py、settings.py |
+| 2026-08-01 | 快路径三层（§4.9,迁移 0006）：L0 快路径（FAQ 升级/手工/挖掘条目 + 模板动态取数 + 精确/语义匹配）+ L1 语义缓存（源 chunk hash 校验复用 + TTL/LRU + 写穿）+ L2 完整链路不动；chat 接入 via 事件；文档删除/重解析/chunk 编辑失效钩子；管理 API + 前端 FastPath 视图（条目/候选/缓存/统计四 tab）+ Chat 命中标记；Prometheus fastpath 指标 | fastpath/*、models/fastpath.py、api/routers/{fastpath,chat,documents}.py、metrics.py、settings.py、storage/vector_local.py(list_ids)、前端 api/fastpath.ts + views/FastPath/FastPathView.vue |
 
 ---
 

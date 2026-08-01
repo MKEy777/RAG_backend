@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 import time
 import uuid
+from collections import deque
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +17,21 @@ from ...settings import settings
 
 log = get_logger("retrieval_api")
 router = APIRouter()
+
+# 进程内滚动延迟样本（仅用于测试页 P50/P99 统计）
+_LATENCY_WINDOW = 1000
+_LATENCY_SAMPLES: deque[int] = deque(maxlen=_LATENCY_WINDOW)
+
+
+def _percentile(sorted_samples: list[int], p: float) -> float:
+    if not sorted_samples:
+        return 0.0
+    k = (len(sorted_samples) - 1) * p
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return float(sorted_samples[f])
+    return sorted_samples[f] * (c - k) + sorted_samples[c] * (k - f)
 
 # 端点历史默认：/retrieval 图谱/wiki 加权默认关（与旧版请求模型一致）
 _ENDPOINT_DEFAULTS = {"enable_graph": False, "enable_wiki_boost": False}
@@ -61,9 +78,13 @@ class RetrievalHit(BaseModel):
 
 class RetrievalResponse(BaseModel):
     hits: list[RetrievalHit]
+    duration_ms: int = 0
+    latency_p50_ms: float = 0.0
+    latency_p99_ms: float = 0.0
+    latency_samples: int = 0
 
 
-def _save_test_history(session: Session, body: RetrievalRequest, hit_count: int, top_score: float | None, duration_ms: int) -> None:
+def _save_test_history(session: Session, body: RetrievalRequest, hit_count: int, top_score: float | None, duration_ms: int, latency_p50_ms: float, latency_p99_ms: float) -> None:
     try:
         params = body.model_dump(exclude={"kb_ids", "query", "save_history"}, exclude_none=True)
         session.add(
@@ -76,6 +97,8 @@ def _save_test_history(session: Session, body: RetrievalRequest, hit_count: int,
                 hit_count=hit_count,
                 top_score=top_score,
                 duration_ms=duration_ms,
+                latency_p50_ms=latency_p50_ms,
+                latency_p99_ms=latency_p99_ms,
             )
         )
         session.commit()
@@ -106,6 +129,10 @@ async def retrieve(body: RetrievalRequest, session: Session = Depends(get_sessio
         endpoint_defaults=_ENDPOINT_DEFAULTS,
     )
     duration_ms = int((time.perf_counter() - start) * 1000)
+    _LATENCY_SAMPLES.append(duration_ms)
+    samples = sorted(_LATENCY_SAMPLES)
+    latency_p50 = _percentile(samples, 0.50)
+    latency_p99 = _percentile(samples, 0.99)
 
     hits = [
         RetrievalHit(
@@ -122,9 +149,15 @@ async def retrieve(body: RetrievalRequest, session: Session = Depends(get_sessio
 
     if body.save_history:
         top_score = hits[0].score if hits else None
-        _save_test_history(session, body, len(hits), top_score, duration_ms)
+        _save_test_history(session, body, len(hits), top_score, duration_ms, round(latency_p50, 1), round(latency_p99, 1))
 
-    return RetrievalResponse(hits=hits)
+    return RetrievalResponse(
+        hits=hits,
+        duration_ms=duration_ms,
+        latency_p50_ms=round(latency_p50, 1),
+        latency_p99_ms=round(latency_p99, 1),
+        latency_samples=len(samples),
+    )
 
 
 @router.get("/history")
@@ -152,6 +185,8 @@ def list_history(
                 "hit_count": t.hit_count,
                 "top_score": t.top_score,
                 "duration_ms": t.duration_ms,
+                "latency_p50_ms": t.latency_p50_ms,
+                "latency_p99_ms": t.latency_p99_ms,
                 "created_at": t.created_at,
             }
             for t in items

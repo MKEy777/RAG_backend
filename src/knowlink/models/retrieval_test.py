@@ -17,3 +17,5 @@ class RetrievalTest(Base, TimestampMixin):
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     top_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_p50_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    latency_p99_ms: Mapped[float | None] = mapped_column(Float, nullable=True)

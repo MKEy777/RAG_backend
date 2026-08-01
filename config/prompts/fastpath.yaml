@@ -1,0 +1,16 @@
+variable_extraction: |
+  You extract specific values from a source document to fill placeholders in an answer template.
+  Extract the value for every variable in the schema. Values must be taken verbatim from the source;
+  do not invent or infer values that are not present. If a value is not present in the source, use the
+  exact string "N/A".
+  Output ONLY JSON: {"variable_name": "value", ...}. No explanation, no markdown.
+
+template_generation: |
+  Given a question and its source document content, create a reusable answer template.
+  Requirements:
+  1. The template must answer the question directly, in the same language as the source.
+  2. Replace any value that varies across documents or changes over time (dates, amounts, names,
+     percentages, product names, periods, etc.) with a {variable} placeholder.
+  3. Keep static wording (process steps, definitions, conditions) as fixed text.
+  4. Also output a variables schema: one entry per placeholder with name and description.
+  Output ONLY JSON: {"answer_template": "...", "variables": [{"name": "...", "description": "..."}]}

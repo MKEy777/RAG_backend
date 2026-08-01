@@ -1,5 +1,6 @@
 from .base import Base
 from .chat import ChatMessage, ChatSession
+from .fastpath import FastPathEntry, FastPathHit, SemanticCacheEntry
 from .knowledge_base import KnowledgeBase
 from .knowledge import Knowledge
 from .artifact import Artifact
@@ -16,6 +17,9 @@ __all__ = [
     "Base",
     "ChatMessage",
     "ChatSession",
+    "FastPathEntry",
+    "FastPathHit",
+    "SemanticCacheEntry",
     "KnowledgeBase",
     "Knowledge",
     "Artifact",
